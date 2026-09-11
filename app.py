@@ -1,4 +1,5 @@
 import os
+import json
 import re
 import subprocess
 import threading
@@ -12,10 +13,12 @@ app = Flask(__name__)
 # /downloads is the host directory:
 # /mnt/Hem-NAS/media/UWTD-Nedladdningar
 DOWNLOAD_DIR = Path("/downloads")
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/uploads"))
 TOKEN_FILE = Path(os.getenv("TV4_TOKEN_FILE", "/config/tv4play-token"))
 DEFAULT_FOLDER = "Nedladdningar Osorterade"
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 (DOWNLOAD_DIR / DEFAULT_FOLDER).mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 jobs = {}
 lock = threading.Lock()
@@ -71,6 +74,26 @@ def relative_folder(folder):
     full = DOWNLOAD_DIR / path
     full.mkdir(parents=True, exist_ok=True)
     return path.as_posix()
+
+
+def safe_upload_path(value):
+    value = (value or "").strip().replace("\\", "/")
+    parts = []
+    for part in value.split("/"):
+        part = part.strip()
+        if not part or part in (".", ".."):
+            continue
+        part = re.sub(r'[<>:"|?*\x00-\x1f]+', "_", part).strip(" .")
+        if part:
+            parts.append(part[:120])
+    return Path(*parts)
+
+
+def safe_upload_file_path(value):
+    path = safe_upload_path(value)
+    if not path.parts:
+        return None
+    return path
 
 
 def run_job(job_id, url, downloader, folder, quality):
@@ -236,6 +259,49 @@ def update_settings():
     return jsonify({"tv4_token_configured": bool(token)})
 
 
+@app.get("/api/upload-folders")
+def upload_folders():
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    folders = [""]
+    for path in UPLOAD_DIR.rglob("*"):
+        if path.is_dir():
+            folders.append(path.relative_to(UPLOAD_DIR).as_posix())
+    return jsonify(sorted(set(folders), key=str.casefold))
+
+
+@app.post("/api/upload")
+def upload():
+    folder = safe_upload_path(request.form.get("folder", ""))
+    target_dir = UPLOAD_DIR / folder
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    raw_paths = request.form.get("paths", "[]")
+    try:
+        paths = json.loads(raw_paths)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Ogiltig filinformation."}), 400
+
+    files = request.files.getlist("files")
+    if not files:
+        return jsonify({"error": "Välj minst en fil eller mapp."}), 400
+
+    uploaded = 0
+    try:
+        for index, file in enumerate(files):
+            relative_name = paths[index] if index < len(paths) else file.filename
+            safe_name = safe_upload_file_path(relative_name)
+            if safe_name is None:
+                continue
+            destination = UPLOAD_DIR / folder / safe_name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            file.save(destination)
+            uploaded += 1
+    except OSError:
+        return jsonify({"error": "Kunde inte spara filerna på servern."}), 500
+
+    return jsonify({"uploaded": uploaded, "folder": (folder / Path(".")).as_posix() if folder.parts else ""})
+
+
 @app.get("/api/folders")
 def folders():
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -244,7 +310,7 @@ def folders():
     for p in DOWNLOAD_DIR.rglob("*"):
         if p.is_dir():
             rel = p.relative_to(DOWNLOAD_DIR)
-            if rel not in folders:
+            if len(rel.parts) <= 2 and rel not in folders:
                 folders.append(rel)
 
     folders = sorted({p.as_posix() for p in folders}, key=str.casefold)

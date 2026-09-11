@@ -14,24 +14,12 @@
       <h1>Media Downloader</h1>
       <p>YouTube via yt-dlp, övriga tjänster via svtplay-dl</p>
     </div>
+    <button id="settingsToggle" class="icon-button" type="button" title="Visa inställningar" aria-label="Visa inställningar">⚙</button>
   </section>
 
   <section class="card">
     <label for="url">URL</label>
     <input id="url" type="url" placeholder="https://www.svtplay.se/... eller https://youtube.com/..." autofocus>
-
-    <div class="grid">
-      <div>
-        <label for="quality">Kvalitet</label>
-        <select id="quality">
-          <option value="best">Bästa möjliga</option>
-          <option value="1080">Max 1080p</option>
-          <option value="720">Max 720p</option>
-          <option value="480">Max 480p</option>
-          <option value="360">Max 360p</option>
-        </select>
-      </div>
-    </div>
 
     <label for="folder">Mapp</label>
     <div class="folder-row">
@@ -48,8 +36,16 @@
     <div id="error"></div>
   </section>
 
-  <section class="card">
+  <section id="settings" class="card hidden">
     <h2>Inställningar</h2>
+    <label for="quality">Kvalitet</label>
+    <select id="quality">
+      <option value="best">Bästa möjliga</option>
+      <option value="1080">Max 1080p</option>
+      <option value="720">Max 720p</option>
+      <option value="480">Max 480p</option>
+      <option value="360">Max 360p</option>
+    </select>
     <label for="tv4Token">TV4 Play-token</label>
     <input id="tv4Token" type="password" autocomplete="new-password" placeholder="Token sparas på servern">
     <p class="hint">Token används av alla användare vid nedladdning från TV4 Play.</p>
@@ -58,14 +54,22 @@
   </section>
 
   <section class="card">
+    <h2>Ladda upp</h2>
+    <label for="uploadFolder">Målmapp på servern</label>
+    <select id="uploadFolder"></select>
+    <label for="uploadFiles">Filer</label>
+    <input id="uploadFiles" type="file" multiple>
+    <label for="uploadDirectory">Mapp</label>
+    <input id="uploadDirectory" type="file" webkitdirectory directory multiple>
+    <button id="uploadStart" type="button">Ladda upp</button>
+    <div id="uploadMessage"></div>
+  </section>
+
+  <section class="card">
     <h2>Pågående</h2>
     <div id="jobs" class="empty">Inga pågående nedladdningar.</div>
   </section>
 
-  <section class="card">
-    <h2>Nedladdade filer</h2>
-    <div id="files" class="empty">Laddar…</div>
-  </section>
 </main>
 
 <script>
@@ -142,6 +146,45 @@ async function startDownload() {
   renderJobs();
 }
 
+async function loadUploadFolders() {
+  const select = document.querySelector('#uploadFolder');
+  const res = await fetch('/api/upload-folders');
+  if (!res.ok) return;
+  const folders = await res.json();
+  select.innerHTML = folders.map(folder =>
+    `<option value="${esc(folder)}">${esc(folder || 'Uppladdningar')}</option>`
+  ).join('');
+}
+
+async function uploadFiles() {
+  const input = document.querySelector('#uploadFiles');
+  const directoryInput = document.querySelector('#uploadDirectory');
+  const message = document.querySelector('#uploadMessage');
+  if (!input.files.length && !directoryInput.files.length) {
+    message.textContent = 'Välj minst en fil eller mapp.';
+    return;
+  }
+
+  const form = new FormData();
+  const paths = [];
+  for (const file of [...input.files, ...directoryInput.files]) {
+    form.append('files', file, file.name);
+    paths.push(file.webkitRelativePath || file.name);
+  }
+  form.append('folder', document.querySelector('#uploadFolder').value);
+  form.append('paths', JSON.stringify(paths));
+
+  const res = await fetch('/api/upload', {method: 'POST', body: form});
+  const data = await res.json();
+  message.textContent = res.ok
+    ? `${data.uploaded} fil(er) uppladdade.`
+    : (data.error || 'Uppladdningen misslyckades.');
+  if (res.ok) {
+    input.value = '';
+    await loadUploadFolders();
+  }
+}
+
 async function loadSettings() {
   const res = await fetch('/api/settings');
   if (!res.ok) return;
@@ -172,7 +215,6 @@ async function poll() {
     if (res.ok) jobs.set(id, await res.json());
   }
   renderJobs();
-  loadFiles();
 }
 
 function renderJobs() {
@@ -204,28 +246,13 @@ function renderJobs() {
   }).join('');
 }
 
-async function loadFiles() {
-  const res = await fetch('/api/files');
-  if (!res.ok) return;
-  const files = await res.json();
-  const el = document.querySelector('#files');
-
-  if (!files.length) {
-    el.className='empty';
-    el.textContent='Inga filer ännu.';
-    return;
-  }
-
-  el.className='';
-  el.innerHTML = files.map(f => `
-    <div class="file">
-      <a href="/download/${f.name.split('/').map(encodeURIComponent).join('/')}">${esc(f.name)}</a>
-      <span>${(f.size/1024/1024).toFixed(1)} MB</span>
-    </div>`).join('');
-}
-
 document.querySelector('#start').addEventListener('click', startDownload);
+document.querySelector('#settingsToggle').addEventListener('click', () => {
+  const settings = document.querySelector('#settings');
+  settings.classList.toggle('hidden');
+});
 document.querySelector('#refreshFolders').addEventListener('click', loadFolders);
+document.querySelector('#uploadStart').addEventListener('click', uploadFiles);
 document.querySelector('#url').addEventListener('keydown', e => {
   if (e.key === 'Enter') startDownload();
 });
@@ -235,7 +262,7 @@ document.querySelector('#newFolder').addEventListener('keydown', e => {
 document.querySelector('#saveSettings').addEventListener('click', saveSettings);
 
 loadFolders();
-loadFiles();
+loadUploadFolders();
 loadSettings();
 setInterval(poll, 1500);
 </script>

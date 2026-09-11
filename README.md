@@ -15,6 +15,7 @@ Webbgränssnitt för yt-dlp + svtplay-dl.
 - Nedladdade filer visas inklusive undermappar
 - YouTube använder yt-dlp; övriga URL:er använder svtplay-dl
 - TV4 Play-token kan sparas gemensamt för alla användare
+- Filer och mappar kan laddas upp till en valbar undermapp
 
 ## TrueNAS
 
@@ -24,6 +25,8 @@ Port: `30120`.
 
 TV4 Play-token sparas i Docker-volymen `media-downloader-config` och skickas till
 `svtplay-dl` vid nedladdning.
+
+Uppladdningar sparas i `/mnt/Hem-NAS/media/uppladdningar` på TrueNAS.
 
 ## Start
 

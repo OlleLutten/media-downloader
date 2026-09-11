@@ -7,6 +7,8 @@ body {
 }
 .wrap { max-width: 900px; margin: 0 auto; padding: 32px 18px 60px; }
 .hero { display:flex; align-items:center; gap:14px; margin-bottom:22px; }
+.hero > div:nth-child(2) { flex:1; }
+.icon-button { width:44px; height:44px; margin:0; padding:0; font-size:22px; }
 .logo {
   width:48px; height:48px; border-radius:14px; display:grid; place-items:center;
   background:#17202a; color:white; font-size:28px;
@@ -34,6 +36,8 @@ button {
 button:hover { opacity:.9; }
 #error { color:#b42318; margin-top:10px; min-height:20px; }
 #settingsMessage { color:#26734d; margin-top:10px; min-height:20px; }
+.hidden { display:none; }
+#uploadMessage { color:#26734d; margin-top:10px; min-height:20px; }
 h2 { margin:0 0 14px; font-size:19px; }
 .empty { color:#78838e; }
 .job { border:1px solid #e0e5ea; border-radius:12px; padding:13px; margin-top:10px; }
