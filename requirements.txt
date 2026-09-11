@@ -1,4 +1,0 @@
-Flask
-gunicorn
-yt-dlp
-svtplay-dl
