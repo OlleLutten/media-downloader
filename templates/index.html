@@ -12,7 +12,7 @@
     <div class="logo">↓</div>
     <div>
       <h1>Media Downloader</h1>
-      <p>yt-dlp + svtplay-dl</p>
+      <p>YouTube via yt-dlp, övriga tjänster via svtplay-dl</p>
     </div>
   </section>
 
@@ -21,14 +21,6 @@
     <input id="url" type="url" placeholder="https://www.svtplay.se/... eller https://youtube.com/..." autofocus>
 
     <div class="grid">
-      <div>
-        <label for="downloader">Downloader</label>
-        <select id="downloader">
-          <option value="auto">Auto</option>
-          <option value="yt-dlp">yt-dlp</option>
-          <option value="svtplay-dl">svtplay-dl</option>
-        </select>
-      </div>
       <div>
         <label for="quality">Kvalitet</label>
         <select id="quality">
@@ -54,6 +46,15 @@
 
     <button id="start">Ladda ner</button>
     <div id="error"></div>
+  </section>
+
+  <section class="card">
+    <h2>Inställningar</h2>
+    <label for="tv4Token">TV4 Play-token</label>
+    <input id="tv4Token" type="password" autocomplete="new-password" placeholder="Token sparas på servern">
+    <p class="hint">Token används av alla användare vid nedladdning från TV4 Play.</p>
+    <button id="saveSettings" type="button">Spara token</button>
+    <div id="settingsMessage"></div>
   </section>
 
   <section class="card">
@@ -121,7 +122,6 @@ async function startDownload() {
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({
       url,
-      downloader: document.querySelector('#downloader').value,
       quality: document.querySelector('#quality').value,
       folder
     })
@@ -140,6 +140,30 @@ async function startDownload() {
   // Refresh so a newly-created folder becomes selectable immediately.
   await loadFolders();
   renderJobs();
+}
+
+async function loadSettings() {
+  const res = await fetch('/api/settings');
+  if (!res.ok) return;
+  const data = await res.json();
+  document.querySelector('#settingsMessage').textContent = data.tv4_token_configured
+    ? 'En token är sparad på servern.'
+    : 'Ingen token är sparad.';
+}
+
+async function saveSettings() {
+  const message = document.querySelector('#settingsMessage');
+  const token = document.querySelector('#tv4Token').value.trim();
+  const res = await fetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({tv4_token: token})
+  });
+  const data = await res.json();
+  message.textContent = res.ok
+    ? (data.tv4_token_configured ? 'Token sparad på servern.' : 'Token borttagen.')
+    : (data.error || 'Kunde inte spara token.');
+  if (res.ok) document.querySelector('#tv4Token').value = '';
 }
 
 async function poll() {
@@ -208,9 +232,11 @@ document.querySelector('#url').addEventListener('keydown', e => {
 document.querySelector('#newFolder').addEventListener('keydown', e => {
   if (e.key === 'Enter') startDownload();
 });
+document.querySelector('#saveSettings').addEventListener('click', saveSettings);
 
 loadFolders();
 loadFiles();
+loadSettings();
 setInterval(poll, 1500);
 </script>
 </body>

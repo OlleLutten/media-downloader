@@ -7,3 +7,7 @@ services:
       - "30120:8080"
     volumes:
       - /mnt/Hem-NAS/media/UWTD-Nedladdningar:/downloads
+      - media-downloader-config:/config
+
+volumes:
+  media-downloader-config:

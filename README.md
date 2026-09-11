@@ -13,12 +13,17 @@ Webbgränssnitt för yt-dlp + svtplay-dl.
 - Pågående jobb med procent och status
 - Misslyckade jobb visar felstatus och senaste output
 - Nedladdade filer visas inklusive undermappar
+- YouTube använder yt-dlp; övriga URL:er använder svtplay-dl
+- TV4 Play-token kan sparas gemensamt för alla användare
 
 ## TrueNAS
 
 Host-mappen `/mnt/Hem-NAS/media/UWTD-Nedladdningar` monteras som `/downloads`.
 
 Port: `30120`.
+
+TV4 Play-token sparas i Docker-volymen `media-downloader-config` och skickas till
+`svtplay-dl` vid nedladdning.
 
 ## Start
 

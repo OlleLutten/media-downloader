@@ -12,6 +12,7 @@ app = Flask(__name__)
 # /downloads is the host directory:
 # /mnt/Hem-NAS/media/UWTD-Nedladdningar
 DOWNLOAD_DIR = Path("/downloads")
+TOKEN_FILE = Path(os.getenv("TV4_TOKEN_FILE", "/config/tv4play-token"))
 DEFAULT_FOLDER = "Nedladdningar Osorterade"
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 (DOWNLOAD_DIR / DEFAULT_FOLDER).mkdir(parents=True, exist_ok=True)
@@ -20,15 +21,34 @@ jobs = {}
 lock = threading.Lock()
 
 SVT_HOSTS = ("svtplay.se", "svt.se", "urplay.se", "ur.se")
+YOUTUBE_HOSTS = ("youtube.com", "youtu.be", "youtube-nocookie.com")
 
 
 def choose_downloader(url, requested):
-    if requested in ("yt-dlp", "svtplay-dl"):
-        return requested
     host = re.sub(r"^www\.", "", re.split(r"/", url.split("://", 1)[-1])[0].lower())
-    if any(host == h or host.endswith("." + h) for h in SVT_HOSTS):
-        return "svtplay-dl"
-    return "yt-dlp"
+    if any(host == h or host.endswith("." + h) for h in YOUTUBE_HOSTS):
+        return "yt-dlp"
+    return "svtplay-dl"
+
+
+def read_tv4_token():
+    try:
+        return TOKEN_FILE.read_text(encoding="utf-8").strip()
+    except (FileNotFoundError, OSError):
+        return ""
+
+
+def save_tv4_token(token):
+    TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if token:
+        temporary_file = TOKEN_FILE.with_suffix(".tmp")
+        temporary_file.write_text(token + "\n", encoding="utf-8")
+        temporary_file.replace(TOKEN_FILE)
+    else:
+        try:
+            TOKEN_FILE.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def safe_folder_path(value):
@@ -65,6 +85,9 @@ def run_job(job_id, url, downloader, folder, quality):
         # svtplay-dl downloads subtitles by default; --all-subtitles asks it
         # to download all available subtitle tracks.
         cmd = ["svtplay-dl", "--output", str(target_dir), "--all-subtitles"]
+        tv4_token = read_tv4_token()
+        if tv4_token:
+            cmd += ["--token", tv4_token]
         if quality != "best":
             # Keep compatibility with the existing UI's quality selector.
             cmd += ["--quality", quality]
@@ -195,6 +218,22 @@ def job(job_id):
         if not item:
             return jsonify({"error": "Jobbet finns inte."}), 404
         return jsonify(item)
+
+
+@app.get("/api/settings")
+def settings():
+    return jsonify({"tv4_token_configured": bool(read_tv4_token())})
+
+
+@app.post("/api/settings")
+def update_settings():
+    data = request.get_json(silent=True) or {}
+    token = str(data.get("tv4_token") or "").strip()
+    try:
+        save_tv4_token(token)
+    except OSError:
+        return jsonify({"error": "Kunde inte spara TV4 Play-token på servern."}), 500
+    return jsonify({"tv4_token_configured": bool(token)})
 
 
 @app.get("/api/folders")
