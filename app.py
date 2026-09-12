@@ -221,6 +221,7 @@ def _run_command(job_id, cmd, recent_output, progress_base=0.0, progress_span=10
         recent_output.append(line)
         del recent_output[:-20]
         _append_job_log(job_id, line)
+        _update_job_title_from_line(job_id, line)
 
         progress = None
         m = re.search(r"(\d+(?:\.\d+)?)%", line)
@@ -254,26 +255,34 @@ def _extract_episode_urls(lines):
     return urls
 
 
-def _filter_svt_subtitles(folder):
-    """Keep only Swedish/English subtitle files after svtplay-dl download.
 
-    svtplay-dl currently exposes --all-subtitles but no language-selection
-    option, so we filter the resulting subtitle files by their language tag.
-    This also keeps variants such as sv-caption and en-US.
-    """
-    subtitle_exts = {".srt", ".vtt", ".ttml", ".dfxp", ".xml", ".ass", ".sub", ".smi"}
-    lang_re = re.compile(r"(?:^|[._-])(sv|swe|en|eng)(?:[._-]|$)", re.IGNORECASE)
-    removed = []
-    for path in folder.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in subtitle_exts:
-            continue
-        if not lang_re.search(path.stem):
-            try:
-                path.unlink()
-                removed.append(path.name)
-            except OSError:
-                pass
-    return removed
+def _set_job_title(job_id, title):
+    title = sanitize_folder_name(title)
+    if not title:
+        return
+    with lock:
+        jobs[job_id]["title"] = title
+
+
+def _update_job_title_from_line(job_id, line):
+    # yt-dlp: [download] Destination: /downloads/Youtube/Title [id].mp4
+    m = re.search(r"\[download\] Destination: (.+)$", line, re.I)
+    if m:
+        name = Path(m.group(1).strip()).name
+        name = re.sub(r"\s*\[[^\]]+\]\.[^.]+$", "", name)
+        name = re.sub(r"\.[^.]+$", "", name)
+        if name:
+            _set_job_title(job_id, name)
+        return
+
+    # svtplay-dl: infer a readable title from a destination path if one is logged.
+    m = re.search(r"(?:Destination|Saving|Sparar):\s*(.+)$", line, re.I)
+    if m:
+        name = Path(m.group(1).strip()).name
+        name = re.sub(r"\.[^.]+$", "", name)
+        name = _humanize_download_name(name)
+        if name:
+            _set_job_title(job_id, name)
 
 
 def run_job(job_id, url, downloader, folder, quality, settings=None):
@@ -281,9 +290,11 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
     target_dir = DOWNLOAD_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
 
+    mode_label = "Alla avsnitt" if settings.get("all_episodes") else (f"{int(settings.get('all_last') or 0)} senaste" if int(settings.get('all_last') or 0) > 0 else "")
     with lock:
         jobs[job_id]["status"] = "running"
         jobs[job_id]["message"] = f"Startar {downloader}…"
+        jobs[job_id]["mode_label"] = mode_label
 
     all_episodes = bool(settings.get("all_episodes", False))
     all_last = int(settings.get("all_last", 0) or 0)
@@ -299,7 +310,9 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
     try:
         if downloader == "svtplay-dl":
             program_name = get_svt_program_name(url)
-            svt_output_dir = target_dir / program_name if program_name else target_dir
+            if program_name:
+                _set_job_title(job_id, program_name)
+            svt_output_dir = target_dir / program_name if program_name else target_dir / DEFAULT_FOLDER
             svt_output_dir.mkdir(parents=True, exist_ok=True)
 
             common = ["svtplay-dl", "--output", str(svt_output_dir), "--all-subtitles"]
@@ -377,6 +390,7 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                         recent_output.append(line)
                         del recent_output[:-20]
                         _append_job_log(job_id, line)
+                        _update_job_title_from_line(job_id, line)
                         p = None
                         m = re.search(r"(\d+(?:\.\d+)?)%", line)
                         if m:
@@ -413,11 +427,6 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                 if code != 0:
                     raise RuntimeError(f"Nedladdningen misslyckades (kod {code}).")
 
-            if svt_output_dir.exists():
-                removed_subtitles = _filter_svt_subtitles(svt_output_dir)
-                if removed_subtitles:
-                    _append_job_log(job_id, f"Tog bort {len(removed_subtitles)} undertexter som inte är svenska eller engelska.")
-
             if program_name and svt_output_dir.exists():
                 for path in list(svt_output_dir.iterdir()):
                     if not path.is_file():
@@ -432,7 +441,7 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                                 pass
 
         else:
-            outtmpl = str(target_dir / "%(playlist_title|movies)s" / "%(title)s [%(id)s].%(ext)s")
+            outtmpl = str(target_dir / "Youtube" / "%(playlist_title|)s" / "%(title)s [%(id)s].%(ext)s")
             cmd = [
                 "yt-dlp", "--newline", "-o", outtmpl,
                 "--write-subs", "--write-auto-subs", "--sub-langs", "sv.*,en.*",
@@ -513,6 +522,7 @@ def create_job(url, downloader, quality, settings):
         jobs[job_id] = {
             "id": job_id, "url": url, "downloader": downloader,
             "status": "queued", "progress": 0, "message": "Väntar…", "output": [], "log": [], "command": "",
+            "title": "", "mode_label": "",
         }
     threading.Thread(
         target=run_job,

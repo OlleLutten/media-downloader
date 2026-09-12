@@ -64,7 +64,7 @@
       </div>
     </div>
 
-    <p class="hint"><strong>Automatisk undermapp:</strong> Nedladdningar sorteras automatiskt efter program/serie. YouTube-spellistor sorteras efter spellistans namn och enskilda videor hamnar i <code>movies</code>.<br><br>«Senaste NN» gör automatiskt att serie-/spellisteläget används. Om du skriver t.ex. <strong>4</strong> och trycker «Ladda ner» laddas bara de senaste fyra avsnitten ner. 0 betyder vanligt läge. «Inkludera klipp» gäller när flera avsnitt hämtas. Kapitel och thumbnail laddas alltid ner automatiskt.</p>
+    <p class="hint"><strong>Automatisk undermapp:</strong> Nedladdningar sorteras automatiskt efter program/serie. YouTube-nedladdningar sparas i <code>Youtube</code> (spellistor får en undermapp med spellistans namn).<br><br>«Senaste NN» gör automatiskt att serie-/spellisteläget används. Om du skriver t.ex. <strong>4</strong> och trycker «Ladda ner» laddas bara de senaste fyra avsnitten ner. 0 betyder vanligt läge. «Inkludera klipp» gäller när flera avsnitt hämtas. Kapitel och thumbnail laddas alltid ner automatiskt.</p>
 
     <label for="tv4Token">TV4 Play-token</label>
     <input id="tv4Token" type="password" autocomplete="new-password" placeholder="Token sparas på servern">
@@ -316,7 +316,7 @@ function renderJobs() {
     return `
       <div class="job ${isError ? 'job-error' : ''} ${isDone ? 'job-done' : ''}">
         <div class="jobtop">
-          <strong>${esc(j.downloader)}</strong>
+          <strong>${esc(j.title || j.downloader)}${j.mode_label ? ` <span class="job-mode">(${esc(j.mode_label)})</span>` : ""}</strong>
           <span class="status ${esc(j.status)}">${esc(statusText(j.status))}</span>
         </div>
         <div class="url">${esc(j.url)}</div>
