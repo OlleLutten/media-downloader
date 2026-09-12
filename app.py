@@ -426,14 +426,17 @@ def parse_download_settings(data):
     }, quality
 
 
-def create_job(url, downloader, quality, settings, title="Nedladdning"):
+def create_job(url, downloader, quality, settings, title="Nedladdning", episode_index=None, episode_total=None, collection_mode=None):
     job_id = uuid.uuid4().hex[:10]
     with lock:
         jobs[job_id] = {
             "id": job_id,
             "url": url,
             "downloader": downloader,
-            "title": title,
+            "title": title or "Nedladdning",
+            "episode_index": episode_index,
+            "episode_total": episode_total,
+            "collection_mode": collection_mode,
             "status": "queued",
             "progress": 0,
             "message": "Väntar…",
@@ -464,11 +467,20 @@ def create_collection_jobs(url, downloader, quality, settings, latest_n=0):
     total = len(urls)
     created = []
     for index, item_url in enumerate(urls, 1):
-        title = f"Avsnitt {index}/{total}" if latest_n > 0 else f"Avsnitt {index}/{total} (Alla avsnitt)"
+        if latest_n > 0:
+            title = f"Avsnitt {index}/{total} (Senaste {total})"
+            collection_mode = "Senaste"
+        else:
+            title = f"Avsnitt {index}/{total} (Alla avsnitt)"
+            collection_mode = "Alla avsnitt"
         child_settings = dict(settings)
         child_settings["all_episodes"] = False
         child_settings["all_last"] = 0
-        created.append(create_job(item_url, downloader, quality, child_settings, title=title))
+        created.append(create_job(
+            item_url, downloader, quality, child_settings,
+            title=title, episode_index=index, episode_total=total,
+            collection_mode=collection_mode,
+        ))
     return created, mode_label
 
 
