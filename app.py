@@ -85,8 +85,67 @@ def sanitize_folder_name(value):
     return value[:120]
 
 
+def _svt_url_program_slug(url):
+    """Get the programme slug from a normal SVT Play /video/... URL."""
+    try:
+        parts = [p for p in url.split("?", 1)[0].split("#", 1)[0].split("/") if p]
+        for i, part in enumerate(parts):
+            if part.lower() == "video" and i + 2 < len(parts):
+                # /video/<video-id>/<programme>/<episode-slug>
+                candidate = parts[i + 2]
+                if candidate and candidate.lower() not in {"video", "play"}:
+                    return candidate
+    except Exception:
+        pass
+    return ""
+
+
+def _svt_humanize_slug(value):
+    """Turn common SVT URL slugs into a pleasant Swedish folder/file name."""
+    value = unescape(str(value or "")).strip()
+    value = value.replace("_", " ").replace("-", " ").replace(".", " ")
+    value = re.sub(r"\s+", " ", value).strip()
+    if not value:
+        return ""
+
+    # Common Swedish words whose URL slugs lose diacritics.
+    replacements = {
+        "allsang": "allsång",
+        "sang": "sång",
+        "pa": "på",
+        "for": "för",
+        "fran": "från",
+    }
+    words = []
+    for word in value.split():
+        lower = word.lower()
+        word = replacements.get(lower, word)
+        words.append(word)
+
+    # Programme names are normally written in title case. Keep short Swedish
+    # connecting words lowercase after the first word.
+    words = [w[:1].upper() + w[1:] if w else w for w in words]
+    for i in range(1, len(words)):
+        if words[i].lower() in {"på", "i", "och", "av", "för", "med", "från", "till", "om"}:
+            words[i] = words[i].lower()
+    return sanitize_folder_name(" ".join(words))
+
+
 def get_svt_program_name(url):
-    """Try to get the human-readable programme/series name from the SVT page."""
+    """Get a human-readable programme name, preferring the URL's programme slug.
+
+    SVT's current single-episode pages do not always expose series metadata in
+    the initial HTML. In those cases svtplay-dl can correctly download the
+    episode but its --subfolder logic may classify it as a non-series and put it
+    in 'movies'. The URL itself reliably contains the programme slug for normal
+    /video/<id>/<programme>/<episode> links, so use that first.
+    """
+    slug = _svt_url_program_slug(url)
+    name = _svt_humanize_slug(slug)
+    if name:
+        return name
+
+    # Fallback for unusual pages: try metadata from the HTML.
     try:
         req = Request(
             url,
@@ -97,30 +156,6 @@ def get_svt_program_name(url):
         )
         with urlopen(req, timeout=10) as response:
             html = response.read().decode("utf-8", "ignore")
-
-        # Prefer JSON-LD metadata, where SVT normally exposes the series name.
-        for raw in re.findall(
-            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
-            html,
-            flags=re.I | re.S,
-        ):
-            try:
-                data = json.loads(raw)
-            except Exception:
-                continue
-
-            candidates = data if isinstance(data, list) else [data]
-            for item in candidates:
-                if not isinstance(item, dict):
-                    continue
-                for key in ("partOfSeries", "isPartOf"):
-                    parent = item.get(key)
-                    if isinstance(parent, dict):
-                        name = sanitize_folder_name(parent.get("name"))
-                        if name:
-                            return name
-
-        # Some pages expose the series name in OpenGraph/meta data.
         for pattern in (
             r'<meta[^>]+(?:property|name)=["\'](?:og:series|twitter:label1)["\'][^>]+content=["\']([^"\']+)["\']',
             r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:series|twitter:label1)["\']',
@@ -133,6 +168,31 @@ def get_svt_program_name(url):
     except Exception:
         pass
     return ""
+
+
+def _humanize_download_name(value):
+    """Make svtplay-dl's dot/slug-heavy names readable without changing IDs."""
+    value = unescape(str(value or ""))
+    suffix = ""
+    match = re.match(r"^(.*?)(-[0-9a-z]+-svtplay)(\.[^.]+)$", value, re.I)
+    if match:
+        value, suffix = match.group(1), match.group(2) + match.group(3)
+    else:
+        ext = Path(value).suffix
+        if ext:
+            suffix = ext
+            value = value[:-len(ext)]
+
+    value = value.replace("_", " ").replace("-", " ").replace(".", " ")
+    value = re.sub(r"\s+", " ", value).strip(" .")
+    if not value:
+        return ""
+    words = []
+    replacements = {"allsang": "allsång", "sang": "sång", "pa": "på", "for": "för", "fran": "från"}
+    for word in value.split():
+        words.append(replacements.get(word.lower(), word))
+    pretty = " ".join(words)
+    return sanitize_folder_name(pretty) + suffix
 
 
 def run_job(job_id, url, downloader, folder, quality, settings=None):
@@ -155,12 +215,10 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
     if downloader == "svtplay-dl":
         program_name = get_svt_program_name(url)
         svt_output_dir = target_dir / program_name if program_name else target_dir
-        if program_name:
-            svt_output_dir.mkdir(parents=True, exist_ok=True)
-            cmd = ["svtplay-dl", "--output", str(svt_output_dir), "--all-subtitles"]
-        else:
-            # Fall back to svtplay-dl's own --subfolder behavior if metadata lookup fails.
-            cmd = ["svtplay-dl", "--output", str(target_dir), "--subfolder", "--all-subtitles"]
+        svt_output_dir.mkdir(parents=True, exist_ok=True)
+        # We control the folder ourselves because --subfolder can classify a
+        # single SVT episode as a non-series and put it in /movies.
+        cmd = ["svtplay-dl", "--output", str(svt_output_dir), "--all-subtitles"]
         tv4_token = read_tv4_token()
         if tv4_token:
             cmd += ["--token", tv4_token]
@@ -233,6 +291,21 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                 if progress is not None:
                     jobs[job_id]["progress"] = progress
         code = proc.wait()
+        if downloader == "svtplay-dl" and program_name and svt_output_dir.exists():
+            # svtplay-dl's own current filename can still contain URL-style
+            # dots. Make the result human-readable while preserving the media
+            # extension and the SVT id/service suffix.
+            for path in list(svt_output_dir.iterdir()):
+                if not path.is_file():
+                    continue
+                pretty = _humanize_download_name(path.name)
+                if pretty and pretty != path.name:
+                    destination = path.with_name(pretty)
+                    if not destination.exists():
+                        try:
+                            path.rename(destination)
+                        except OSError:
+                            pass
         error_patterns = (
             r"\berror\b", r"\bfailed\b", r"\bfailure\b", r"\bunable to\b",
             r"\bexception\b", r"http error", r"traceback",

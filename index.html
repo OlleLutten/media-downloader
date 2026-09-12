@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Media Downloader</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="wrap">
+  <section class="hero">
+    <div class="logo">↓</div>
+    <div>
+      <h1>Media Downloader</h1>
+      <p>YouTube via yt-dlp, övriga tjänster via svtplay-dl</p>
+    </div>
+    <button id="settingsToggle" class="icon-button" type="button" title="Visa inställningar" aria-label="Visa inställningar">⚙</button>
+  </section>
+
+  <section class="card">
+    <label for="url">URL</label>
+    <div class="url-row">
+      <input id="url" type="url" placeholder="https://www.svtplay.se/... eller https://youtube.com/..." autofocus>
+      <button id="downloadAll" class="secondary-action" type="button">Ladda ner alla avsnitt</button>
+    </div>
+
+    <p class="hint">Nedladdningar sorteras automatiskt i en undermapp med programmets/seriens namn.</p>
+
+    <button id="start">Ladda ner</button>
+    <div id="error"></div>
+  </section>
+
+  <section id="settings" class="card hidden">
+    <h2>Inställningar</h2>
+    <p class="hint">Kapitel och thumbnail är alltid aktiverade.</p>
+
+    <label for="quality">Kvalitet</label>
+    <select id="quality">
+      <option value="best">Bästa möjliga</option>
+      <option value="1080">Max 1080p</option>
+      <option value="720">Max 720p</option>
+      <option value="480">Max 480p</option>
+      <option value="360">Max 360p</option>
+    </select>
+
+    <div class="settings-grid">
+<label class="check-row">
+        <input id="rawSubtitles" type="checkbox">
+        <span>Spara undertexter i originalformat</span>
+      </label>
+<label class="check-row">
+        <input id="embedThumbnail" type="checkbox">
+        <span>Bädda in thumbnail i videon</span>
+      </label>
+
+      <label class="check-row">
+        <input id="includeClips" type="checkbox">
+        <span>Inkludera klipp vid «alla avsnitt»</span>
+      </label>
+
+      <div>
+        <label for="allLast">Senaste NN avsnitt</label>
+        <input id="allLast" type="number" min="0" max="999" step="1" placeholder="0 = alla">
+      </div>
+    </div>
+
+    <p class="hint"><strong>Automatisk undermapp:</strong> Nedladdningar sorteras automatiskt efter program/serie. För svtplay-dl används <code>--subfolder</code>. YouTube-spellistor sorteras efter spellistans namn och enskilda videor hamnar i <code>movies</code>.<br><br>«Senaste NN» och «Inkludera klipp» används främst av svtplay-dl. 0 på «Senaste NN» betyder alla avsnitt. På YouTube används «Senaste NN» för att ta de sista posterna i en spellista. Kapitel och thumbnail laddas alltid ner automatiskt. Inbäddning av thumbnail stöds av yt-dlp.</p>
+
+    <label for="tv4Token">TV4 Play-token</label>
+    <input id="tv4Token" type="password" autocomplete="new-password" placeholder="Token sparas på servern">
+    <p class="hint">Token används av alla användare vid nedladdning från TV4 Play.</p>
+    <button id="saveSettings" type="button">Spara token</button>
+    <div id="settingsMessage"></div>
+  </section>
+
+  <section class="card">
+    <h2>Pågående</h2>
+    <div id="jobs" class="empty">Inga pågående nedladdningar.</div>
+  </section>
+
+  <section class="card">
+    <h2>Ladda upp</h2>
+    <label for="uploadFolder">Målmapp på servern</label>
+    <select id="uploadFolder"></select>
+    <label for="uploadFiles">Filer</label>
+    <input id="uploadFiles" type="file" multiple>
+    <label for="uploadDirectory">Mapp</label>
+    <input id="uploadDirectory" type="file" webkitdirectory directory multiple>
+    <button id="uploadStart" type="button">Ladda upp</button>
+    <div id="uploadMessage"></div>
+  </section>
+
+</main>
+
+<script>
+const jobs = new Map();
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+function statusText(status) {
+  return ({
+    queued: 'Väntar',
+    running: 'Laddar ner',
+    done: 'Klar',
+    error: 'Misslyckades'
+  })[status] || status;
+}
+
+async function startDownloadAll() {
+  const url = document.querySelector('#url').value.trim();
+  const error = document.querySelector('#error');
+
+  error.textContent = '';
+  if (!url) {
+    error.textContent = 'Klistra in en serie-/playlist-URL först.';
+    return;
+  }
+
+  const res = await fetch('/api/download-all', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      url,
+      downloader: 'auto',
+      quality: document.querySelector('#quality').value,
+      all_last: Number(document.querySelector('#allLast').value || 0),
+      include_clips: document.querySelector('#includeClips').checked,
+      raw_subtitles: document.querySelector('#rawSubtitles').checked,
+      embed_thumbnail: document.querySelector('#embedThumbnail').checked
+    })
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    error.textContent = data.error || 'Kunde inte hitta avsnitten.';
+    return;
+  }
+
+  for (const item of data.jobs || []) {
+    jobs.set(item.id, item);
+  }
+  document.querySelector('#url').value = '';
+  renderJobs();
+}
+
+async function startDownload() {
+  const url = document.querySelector('#url').value.trim();
+  const error = document.querySelector('#error');
+
+  error.textContent = '';
+  if (!url) {
+    error.textContent = 'Klistra in en URL först.';
+    return;
+  }
+
+  const res = await fetch('/api/download', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      url,
+      quality: document.querySelector('#quality').value,
+      all_episodes: false,
+      all_last: Number(document.querySelector('#allLast').value || 0),
+      include_clips: document.querySelector('#includeClips').checked,
+      raw_subtitles: document.querySelector('#rawSubtitles').checked,
+      embed_thumbnail: document.querySelector('#embedThumbnail').checked
+    })
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    error.textContent = data.error || 'Något gick fel.';
+    return;
+  }
+
+  jobs.set(data.id, data);
+  document.querySelector('#url').value = '';
+  renderJobs();
+}
+
+async function loadUploadFolders() {
+  const select = document.querySelector('#uploadFolder');
+  const res = await fetch('/api/upload-folders');
+  if (!res.ok) return;
+  const folders = await res.json();
+  select.innerHTML = folders.map(folder =>
+    `<option value="${esc(folder)}">${esc(folder || 'Uppladdningar')}</option>`
+  ).join('');
+}
+
+async function uploadFiles() {
+  const input = document.querySelector('#uploadFiles');
+  const directoryInput = document.querySelector('#uploadDirectory');
+  const message = document.querySelector('#uploadMessage');
+  if (!input.files.length && !directoryInput.files.length) {
+    message.textContent = 'Välj minst en fil eller mapp.';
+    return;
+  }
+
+  const form = new FormData();
+  const paths = [];
+  for (const file of [...input.files, ...directoryInput.files]) {
+    form.append('files', file, file.name);
+    paths.push(file.webkitRelativePath || file.name);
+  }
+  form.append('folder', document.querySelector('#uploadFolder').value);
+  form.append('paths', JSON.stringify(paths));
+
+  const res = await fetch('/api/upload', {method: 'POST', body: form});
+  const data = await res.json();
+  message.textContent = res.ok
+    ? `${data.uploaded} fil(er) uppladdade.`
+    : (data.error || 'Uppladdningen misslyckades.');
+  if (res.ok) {
+    input.value = '';
+  }
+}
+
+function loadLocalDownloadSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('mediaDownloaderSettings') || '{}');
+    if (saved.quality) document.querySelector('#quality').value = saved.quality;
+    document.querySelector('#rawSubtitles').checked = !!saved.rawSubtitles;
+    document.querySelector('#embedThumbnail').checked = !!saved.embedThumbnail;
+    document.querySelector('#includeClips').checked = !!saved.includeClips;
+    if (saved.allLast !== undefined) document.querySelector('#allLast').value = saved.allLast;
+  } catch (_) {}
+}
+
+function saveLocalDownloadSettings() {
+  localStorage.setItem('mediaDownloaderSettings', JSON.stringify({
+    quality: document.querySelector('#quality').value,
+    rawSubtitles: document.querySelector('#rawSubtitles').checked,
+    embedThumbnail: document.querySelector('#embedThumbnail').checked,
+    includeClips: document.querySelector('#includeClips').checked,
+    allLast: document.querySelector('#allLast').value || ''
+  }));
+}
+
+async function loadSettings() {
+  const res = await fetch('/api/settings');
+  if (!res.ok) return;
+  const data = await res.json();
+  document.querySelector('#settingsMessage').textContent = data.tv4_token_configured
+    ? 'En token är sparad på servern.'
+    : 'Ingen token är sparad.';
+}
+
+async function saveSettings() {
+  const message = document.querySelector('#settingsMessage');
+  const token = document.querySelector('#tv4Token').value.trim();
+  const res = await fetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({tv4_token: token})
+  });
+  const data = await res.json();
+  message.textContent = res.ok
+    ? (data.tv4_token_configured ? 'Token sparad på servern.' : 'Token borttagen.')
+    : (data.error || 'Kunde inte spara token.');
+  if (res.ok) document.querySelector('#tv4Token').value = '';
+}
+
+async function poll() {
+  for (const [id] of jobs) {
+    const res = await fetch('/api/jobs/' + id);
+    if (res.ok) jobs.set(id, await res.json());
+  }
+  renderJobs();
+}
+
+function renderJobs() {
+  const el = document.querySelector('#jobs');
+  if (!jobs.size) {
+    el.className='empty';
+    el.textContent='Inga pågående nedladdningar.';
+    return;
+  }
+
+  el.className='';
+  el.innerHTML = [...jobs.values()].reverse().map(j => {
+    const isError = j.status === 'error';
+    const isDone = j.status === 'done';
+    const output = (j.output || []).join('\n');
+
+    return `
+      <div class="job ${isError ? 'job-error' : ''} ${isDone ? 'job-done' : ''}">
+        <div class="jobtop">
+          <strong>${esc(j.downloader)}</strong>
+          <span class="status ${esc(j.status)}">${esc(statusText(j.status))}</span>
+        </div>
+        <div class="url">${esc(j.url)}</div>
+        <div class="bar"><i style="width:${Math.min(100, Math.max(0, j.progress || 0))}%"></i></div>
+        <small>${Math.round(j.progress || 0)}% — ${esc(j.message || '')}</small>
+        ${isError && output ? `<details class="error-details"><summary>Visa felmeddelande</summary><pre>${esc(output)}</pre></details>` : ''}
+      </div>`;
+  }).join('');
+}
+
+document.querySelector('#start').addEventListener('click', startDownload);
+document.querySelector('#downloadAll').addEventListener('click', startDownloadAll);
+document.querySelector('#settingsToggle').addEventListener('click', () => {
+  const settings = document.querySelector('#settings');
+  settings.classList.toggle('hidden');
+});
+document.querySelector('#uploadStart').addEventListener('click', uploadFiles);
+document.querySelector('#url').addEventListener('keydown', e => {
+  if (e.key === 'Enter') startDownload();
+});
+document.querySelector('#saveSettings').addEventListener('click', saveSettings);
+['quality','rawSubtitles','embedThumbnail','includeClips','allLast'].forEach(id => {
+  document.querySelector('#' + id).addEventListener('change', saveLocalDownloadSettings);
+});
+
+loadUploadFolders();
+loadLocalDownloadSettings();
+loadSettings();
+setInterval(poll, 1500);
+</script>
+</body>
+</html>
