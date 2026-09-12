@@ -1,4 +1,4 @@
 flask
 gunicorn
 yt-dlp
-svtplay-dl
+svtplay-dl==4.197

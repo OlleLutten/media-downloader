@@ -36,3 +36,10 @@ Bygg/deploya med Portainer Stack eller:
 ```bash
 docker compose up -d --build
 ```
+
+
+## Version 18 changes
+- Uses svtplay-dl 4.197, including the current SVT Play all-episodes fix.
+- Uses native `--all-episodes` / `--all-last` instead of parsing episode URLs.
+- Avoids overwriting already downloaded files.
+- Keeps svtplay-dl subtitle filenames unchanged.
