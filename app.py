@@ -132,6 +132,28 @@ def _svt_humanize_slug(value):
     return sanitize_folder_name(" ".join(words))
 
 
+def get_tv4_program_name(url):
+    """Get the programme name from a normal TV4 Play /program/... URL."""
+    try:
+        parts = [p for p in url.split("?", 1)[0].split("#", 1)[0].split("/") if p]
+        for i, part in enumerate(parts):
+            if part.lower() == "program" and i + 2 < len(parts):
+                candidate = parts[i + 2]
+                if candidate and candidate.lower() not in {"program", "play"}:
+                    value = unescape(candidate).replace("_", " ").replace("-", " ").replace(".", " ")
+                    value = re.sub(r"\s+", " ", value).strip()
+                    if value:
+                        words = value.split()
+                        words = [w[:1].upper() + w[1:] if w else w for w in words]
+                        for j in range(1, len(words)):
+                            if words[j].lower() in {"på", "i", "och", "av", "för", "med", "från", "till", "om"}:
+                                words[j] = words[j].lower()
+                        return sanitize_folder_name(" ".join(words))
+    except Exception:
+        pass
+    return ""
+
+
 def get_svt_program_name(url):
     """Get a human-readable programme name, preferring the URL's programme slug.
 
@@ -309,7 +331,12 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
 
     try:
         if downloader == "svtplay-dl":
-            program_name = get_svt_program_name(url)
+            # Both SVT Play and TV4 Play series/program pages should get their
+            # own folder. SVT uses /video/<id>/<program>/<episode>, while TV4
+            # uses /program/<id>/<program>.
+            host = re.sub(r"^www\.", "", re.split(r"/", url.split("://", 1)[-1])[0].lower())
+            is_tv4_url = host == "tv4play.se" or host.endswith(".tv4play.se") or host == "tv4.se" or host.endswith(".tv4.se")
+            program_name = get_tv4_program_name(url) if is_tv4_url else get_svt_program_name(url)
             if program_name:
                 _set_job_title(job_id, program_name)
             svt_output_dir = target_dir / program_name if program_name else target_dir / DEFAULT_FOLDER
