@@ -315,7 +315,7 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
             svt_output_dir = target_dir / program_name if program_name else target_dir / DEFAULT_FOLDER
             svt_output_dir.mkdir(parents=True, exist_ok=True)
 
-            common = ["svtplay-dl", "--output", str(svt_output_dir), "--all-subtitles", "--no-overwrites"]
+            common = ["svtplay-dl", "--output", str(svt_output_dir), "--all-subtitles"]
             if tv4_token:
                 common += ["--token", tv4_token]
             if quality != "best":
