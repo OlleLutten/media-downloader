@@ -38,8 +38,8 @@ docker compose up -d --build
 ```
 
 
-## Version 18 changes
-- Uses svtplay-dl 4.197, including the current SVT Play all-episodes fix.
-- Uses native `--all-episodes` / `--all-last` instead of parsing episode URLs.
-- Avoids overwriting already downloaded files.
-- Keeps svtplay-dl subtitle filenames unchanged.
+### v17-fixed
+- Utgår från v17.
+- Fixar SVT Play `--all-episodes` så att URL:en skickas med i kommandot.
+- Behåller svtplay-dl:s automatiska filnamn, inklusive punkt-/ID-strukturen, så att video och undertext får exakt matchande namn.
+- Låser svtplay-dl till 4.197.
