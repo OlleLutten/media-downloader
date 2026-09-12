@@ -267,53 +267,56 @@ def _run_command(job_id, cmd, recent_output, progress_base=0.0, progress_span=10
     return return_code
 
 
-def _move_new_tv4_files_to_program_folder(program_name, started_ns):
-    """Move TV4 files that ended up in the fallback folder into the programme folder.
+def _tv4_normalized_name(value):
+    value = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", "", value.casefold())
 
-    svtplay-dl normally honors --output as a directory, but this extra pass makes
-    TV4 downloads robust against service-specific output handling. It only moves
-    files created/updated during the current download, so unrelated downloads are
-    left alone.
+
+def _move_tv4_fallback_files_to_program_folder(program_name):
+    """Move TV4 files that nevertheless land in the fallback folder.
+
+    TV4 filenames contain the programme title (for example
+    ``vem.kan.styra.mauri...-tv4play.mp4``). Match that title instead of using
+    timestamps: svtplay-dl may preserve/alter file timestamps, which made the
+    previous mtime-based fallback unreliable.
     """
     if not program_name:
         return 0
 
-    source_dirs = [DOWNLOAD_DIR / DEFAULT_FOLDER, DOWNLOAD_DIR]
     destination = DOWNLOAD_DIR / program_name
     destination.mkdir(parents=True, exist_ok=True)
-    moved = 0
-    seen = set()
+    wanted = _tv4_normalized_name(program_name)
+    if not wanted:
+        return 0
 
-    for source_dir in source_dirs:
-        if not source_dir.exists():
+    source_dir = DOWNLOAD_DIR / DEFAULT_FOLDER
+    if not source_dir.exists():
+        return 0
+
+    moved = 0
+    destination_resolved = destination.resolve()
+    try:
+        candidates = source_dir.rglob("*")
+    except OSError:
+        return 0
+
+    for source in candidates:
+        if not source.is_file():
             continue
         try:
-            candidates = source_dir.rglob("*")
-        except OSError:
-            continue
-        for source in candidates:
-            if not source.is_file():
+            resolved = source.resolve()
+            if destination_resolved in resolved.parents:
                 continue
-            try:
-                resolved = source.resolve()
-                if resolved in seen or resolved == destination.resolve() or destination.resolve() in resolved.parents:
-                    continue
-                stat = source.stat()
-                if stat.st_mtime_ns < started_ns:
-                    continue
-            except OSError:
+            filename_norm = _tv4_normalized_name(source.stem)
+            if "tv4play" not in filename_norm or wanted not in filename_norm:
                 continue
-            seen.add(resolved)
             target = destination / source.name
             if target.exists():
-                # Do not overwrite an existing file. svtplay-dl handles the
-                # duplicate according to its own rules.
                 continue
-            try:
-                shutil.move(str(source), str(target))
-                moved += 1
-            except OSError:
-                continue
+            shutil.move(str(source), str(target))
+            moved += 1
+        except OSError:
+            continue
 
     return moved
 
@@ -392,13 +395,12 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
             program_name = get_tv4_program_name(url) if is_tv4_url else get_svt_program_name(url)
             if program_name:
                 _set_job_title(job_id, program_name)
-            # SVT honors --output as expected. TV4 Play can still place the
-            # resulting media in its fallback directory depending on the
-            # service/URL, so deliberately use the fallback directory for TV4
-            # and move the files to the programme folder after each download.
-            # This makes the destination deterministic instead of relying on
-            # TV4's service-specific output handling.
-            svt_output_dir = (target_dir / DEFAULT_FOLDER) if is_tv4_url else (target_dir / program_name if program_name else target_dir / DEFAULT_FOLDER)
+            # Send both SVT and TV4 directly to the programme folder. TV4 is
+            # additionally checked after each download because older/service-
+            # specific svtplay-dl behavior can still fall back to the default
+            # folder; the fallback mover then catches those files by programme
+            # name rather than unreliable filesystem timestamps.
+            svt_output_dir = target_dir / program_name if program_name else target_dir / DEFAULT_FOLDER
             svt_output_dir.mkdir(parents=True, exist_ok=True)
 
             common = ["svtplay-dl", "--output", str(svt_output_dir), "--all-subtitles"]
@@ -504,7 +506,7 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                                 jobs[job_id]["progress"] = (index + p / 100.0) * 100.0 / total
                     code = proc.wait()
                     if is_tv4:
-                        moved = _move_new_tv4_files_to_program_folder(program_name, started_ns)
+                        moved = _move_tv4_fallback_files_to_program_folder(program_name)
                         if moved:
                             _append_job_log(job_id, f"Flyttade {moved} TV4-fil(er) till mappen {program_name}.")
                     if code != 0:
@@ -519,7 +521,7 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                 started_ns = time.time_ns()
                 code = _run_command(job_id, cmd, recent_output)
                 if is_tv4_url:
-                    moved = _move_new_tv4_files_to_program_folder(program_name, started_ns)
+                    moved = _move_tv4_fallback_files_to_program_folder(program_name)
                     if moved:
                         _append_job_log(job_id, f"Flyttade {moved} TV4-fil(er) till mappen {program_name}.")
                 if code != 0:
@@ -531,7 +533,7 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                 started_ns = time.time_ns()
                 code = _run_command(job_id, cmd, recent_output)
                 if is_tv4_url:
-                    moved = _move_new_tv4_files_to_program_folder(program_name, started_ns)
+                    moved = _move_tv4_fallback_files_to_program_folder(program_name)
                     if moved:
                         _append_job_log(job_id, f"Flyttade {moved} TV4-fil(er) till mappen {program_name}.")
                 if code != 0:
