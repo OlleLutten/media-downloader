@@ -4,6 +4,8 @@ import re
 import shlex
 import subprocess
 import threading
+import shutil
+import time
 import uuid
 from pathlib import Path
 from html import unescape
@@ -265,6 +267,57 @@ def _run_command(job_id, cmd, recent_output, progress_base=0.0, progress_span=10
     return return_code
 
 
+def _move_new_tv4_files_to_program_folder(program_name, started_ns):
+    """Move TV4 files that ended up in the fallback folder into the programme folder.
+
+    svtplay-dl normally honors --output as a directory, but this extra pass makes
+    TV4 downloads robust against service-specific output handling. It only moves
+    files created/updated during the current download, so unrelated downloads are
+    left alone.
+    """
+    if not program_name:
+        return 0
+
+    source_dirs = [DOWNLOAD_DIR / DEFAULT_FOLDER, DOWNLOAD_DIR]
+    destination = DOWNLOAD_DIR / program_name
+    destination.mkdir(parents=True, exist_ok=True)
+    moved = 0
+    seen = set()
+
+    for source_dir in source_dirs:
+        if not source_dir.exists():
+            continue
+        try:
+            candidates = source_dir.rglob("*")
+        except OSError:
+            continue
+        for source in candidates:
+            if not source.is_file():
+                continue
+            try:
+                resolved = source.resolve()
+                if resolved in seen or resolved == destination.resolve() or destination.resolve() in resolved.parents:
+                    continue
+                stat = source.stat()
+                if stat.st_mtime_ns < started_ns:
+                    continue
+            except OSError:
+                continue
+            seen.add(resolved)
+            target = destination / source.name
+            if target.exists():
+                # Do not overwrite an existing file. svtplay-dl handles the
+                # duplicate according to its own rules.
+                continue
+            try:
+                shutil.move(str(source), str(target))
+                moved += 1
+            except OSError:
+                continue
+
+    return moved
+
+
 def _extract_episode_urls(lines):
     urls = []
     seen = set()
@@ -409,6 +462,7 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                 total = len(selected)
                 for index, episode_url in enumerate(selected):
                     cmd = list(common) + [episode_url]
+                    started_ns = time.time_ns()
                     display = shlex.join(cmd).replace(tv4_token, "***REDACTED***") if tv4_token else shlex.join(cmd)
                     _append_job_log(job_id, f"Startar avsnitt {index + 1}/{total}")
                     _append_job_log(job_id, f"Kommando: {display}")
@@ -443,6 +497,10 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                             if p is not None:
                                 jobs[job_id]["progress"] = (index + p / 100.0) * 100.0 / total
                     code = proc.wait()
+                    if is_tv4:
+                        moved = _move_new_tv4_files_to_program_folder(program_name, started_ns)
+                        if moved:
+                            _append_job_log(job_id, f"Flyttade {moved} TV4-fil(er) till mappen {program_name}.")
                     if code != 0:
                         raise RuntimeError(f"Avsnitt {index + 1}/{total} misslyckades (kod {code}).")
 
@@ -452,14 +510,24 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                     cmd += ["--include-clips"]
                 display = shlex.join(cmd).replace(tv4_token, "***REDACTED***") if tv4_token else shlex.join(cmd)
                 _append_job_log(job_id, f"Kommando: {display}")
+                started_ns = time.time_ns()
                 code = _run_command(job_id, cmd, recent_output)
+                if is_tv4_url:
+                    moved = _move_new_tv4_files_to_program_folder(program_name, started_ns)
+                    if moved:
+                        _append_job_log(job_id, f"Flyttade {moved} TV4-fil(er) till mappen {program_name}.")
                 if code != 0:
                     raise RuntimeError(f"Nedladdningen misslyckades (kod {code}).")
             else:
                 cmd = list(common) + [url]
                 display = shlex.join(cmd).replace(tv4_token, "***REDACTED***") if tv4_token else shlex.join(cmd)
                 _append_job_log(job_id, f"Kommando: {display}")
+                started_ns = time.time_ns()
                 code = _run_command(job_id, cmd, recent_output)
+                if is_tv4_url:
+                    moved = _move_new_tv4_files_to_program_folder(program_name, started_ns)
+                    if moved:
+                        _append_job_log(job_id, f"Flyttade {moved} TV4-fil(er) till mappen {program_name}.")
                 if code != 0:
                     raise RuntimeError(f"Nedladdningen misslyckades (kod {code}).")
 

@@ -22,7 +22,7 @@ Webbgränssnitt för yt-dlp + svtplay-dl.
 
 Host-mappen `/mnt/Hem-NAS/media/UWTD-Nedladdningar` monteras som `/downloads`.
 
-Port: `30120`.
+Port: `8083`.
 
 TV4 Play-token sparas i Docker-volymen `media-downloader-config` och skickas till
 `svtplay-dl` vid nedladdning.
