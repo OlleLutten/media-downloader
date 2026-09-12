@@ -96,7 +96,8 @@ def safe_upload_file_path(value):
     return path
 
 
-def run_job(job_id, url, downloader, folder, quality):
+def run_job(job_id, url, downloader, folder, quality, settings=None):
+    settings = settings or {}
     target_dir = DOWNLOAD_DIR / safe_folder_path(folder)
     target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -104,27 +105,46 @@ def run_job(job_id, url, downloader, folder, quality):
         jobs[job_id]["status"] = "running"
         jobs[job_id]["message"] = f"Startar {downloader}…"
 
+    all_episodes = bool(settings.get("all_episodes", False))
+    all_last = int(settings.get("all_last", 0) or 0)
+    include_clips = bool(settings.get("include_clips", False))
+    chapters = bool(settings.get("chapters", False))
+    raw_subtitles = bool(settings.get("raw_subtitles", False))
+
     if downloader == "svtplay-dl":
-        # svtplay-dl downloads subtitles by default; --all-subtitles asks it
-        # to download all available subtitle tracks.
         cmd = ["svtplay-dl", "--output", str(target_dir), "--all-subtitles"]
         tv4_token = read_tv4_token()
         if tv4_token:
             cmd += ["--token", tv4_token]
         if quality != "best":
-            # Keep compatibility with the existing UI's quality selector.
             cmd += ["--quality", quality]
+        if chapters:
+            cmd += ["--chapters"]
+        if raw_subtitles:
+            cmd += ["--raw-subtitles"]
+        if all_episodes:
+            cmd += ["--all-episodes"]
+            if all_last > 0:
+                cmd += ["--all-last", str(all_last)]
+            if include_clips:
+                cmd += ["--include-clips"]
         cmd.append(url)
     else:
         outtmpl = str(target_dir / "%(title)s [%(id)s].%(ext)s")
         cmd = [
-            "yt-dlp", "--newline",
-            "-o", outtmpl,
-            "--write-subs",
-            "--write-auto-subs",
-            "--sub-langs", "all",
-            "--sub-format", "best",
+            "yt-dlp", "--newline", "-o", outtmpl,
+            "--write-subs", "--write-auto-subs", "--sub-langs", "all",
         ]
+        # yt-dlp has no separate raw-subtitles switch; --sub-format best
+        # keeps the best available subtitle format without conversion.
+        if raw_subtitles:
+            cmd += ["--sub-format", "best"]
+        else:
+            cmd += ["--sub-format", "srt/vtt/ass/best"]
+        if chapters:
+            cmd += ["--embed-chapters"]
+        if all_episodes and all_last > 0:
+            cmd += ["--playlist-reverse", "--playlist-end", str(all_last)]
         if quality == "best":
             cmd += ["-f", "bv*+ba/b"]
         else:
@@ -132,63 +152,40 @@ def run_job(job_id, url, downloader, folder, quality):
         cmd += ["--merge-output-format", "mp4", url]
 
     recent_output = []
-
     try:
         proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1,
         )
-
         for raw_line in proc.stdout:
             line = raw_line.strip()
             if not line:
                 continue
-
             recent_output.append(line)
             recent_output = recent_output[-20:]
-
             progress = None
             m = re.search(r"(\d+(?:\.\d+)?)%", line)
             if m:
                 progress = float(m.group(1))
             else:
-                # svtplay-dl often reports progress as [12/100].
                 m = re.search(r"\[(\d+)\s*/\s*(\d+)\]", line)
                 if m:
                     current, total = int(m.group(1)), int(m.group(2))
                     if total:
                         progress = current * 100 / total
-
             with lock:
                 jobs[job_id]["message"] = line[-500:]
                 jobs[job_id]["output"] = recent_output
                 if progress is not None:
                     jobs[job_id]["progress"] = progress
-
         code = proc.wait()
-
-        # Some downloader failures can be accompanied by a zero exit code.
-        # Explicit error output should therefore override the exit code.
         error_patterns = (
-            r"\\berror\\b",
-            r"\\bfailed\\b",
-            r"\\bfailure\\b",
-            r"\\bunable to\\b",
-            r"\\bexception\\b",
-            r"http error",
-            r"traceback",
+            r"\berror\b", r"\bfailed\b", r"\bfailure\b", r"\bunable to\b",
+            r"\bexception\b", r"http error", r"traceback",
         )
-        output_text = "\\n".join(recent_output)
-        explicit_error = any(
-            re.search(pattern, output_text, re.IGNORECASE)
-            for pattern in error_patterns
-        )
-
+        output_text = "\n".join(recent_output)
+        explicit_error = any(re.search(pattern, output_text, re.IGNORECASE) for pattern in error_patterns)
         success = code == 0 and not explicit_error
-
         with lock:
             jobs[job_id]["output"] = recent_output
             if success:
@@ -197,14 +194,10 @@ def run_job(job_id, url, downloader, folder, quality):
                 jobs[job_id]["message"] = "Klar!"
             else:
                 jobs[job_id]["status"] = "error"
-                if code != 0:
-                    jobs[job_id]["message"] = (
-                        f"Nedladdningen misslyckades (kod {code})."
-                    )
-                else:
-                    jobs[job_id]["message"] = (
-                        "Nedladdningen misslyckades trots att processen avslutades utan felkod."
-                    )
+                jobs[job_id]["message"] = (
+                    f"Nedladdningen misslyckades (kod {code})." if code != 0
+                    else "Nedladdningen misslyckades trots att processen avslutades utan felkod."
+                )
     except Exception as e:
         with lock:
             jobs[job_id]["status"] = "error"
@@ -217,45 +210,76 @@ def index():
     return render_template("index.html")
 
 
+def parse_download_settings(data):
+    quality = str(data.get("quality", "best"))
+    if quality not in ("best", "1080", "720", "480", "360"):
+        raise ValueError("Ogiltig kvalitet.")
+    try:
+        all_last = int(data.get("all_last", 0) or 0)
+    except (TypeError, ValueError):
+        raise ValueError("Antal senaste avsnitt måste vara ett heltal.")
+    if all_last < 0 or all_last > 999:
+        raise ValueError("Antal senaste avsnitt måste vara mellan 0 och 999.")
+    return {
+        "chapters": bool(data.get("chapters", False)),
+        "all_episodes": bool(data.get("all_episodes", False)),
+        "all_last": all_last,
+        "include_clips": bool(data.get("include_clips", False)),
+        "raw_subtitles": bool(data.get("raw_subtitles", False)),
+    }, quality
+
+
+def create_job(url, downloader, folder, quality, settings):
+    job_id = uuid.uuid4().hex[:10]
+    with lock:
+        jobs[job_id] = {
+            "id": job_id, "url": url, "downloader": downloader, "folder": folder,
+            "status": "queued", "progress": 0, "message": "Väntar…", "output": [],
+        }
+    threading.Thread(
+        target=run_job,
+        args=(job_id, url, downloader, folder, quality, settings),
+        daemon=True,
+    ).start()
+    return jobs[job_id]
+
+
 @app.post("/api/download")
 def download():
     data = request.get_json(silent=True) or {}
     url = (data.get("url") or "").strip()
     requested = data.get("downloader", "auto")
-    quality = str(data.get("quality", "best"))
     folder = relative_folder(data.get("folder", ""))
-
     if not re.match(r"^https?://", url):
         return jsonify({"error": "Ange en giltig http/https-URL."}), 400
-
     if requested not in ("auto", "yt-dlp", "svtplay-dl"):
         return jsonify({"error": "Ogiltigt val av downloader."}), 400
-
-    if quality not in ("best", "1080", "720", "480", "360"):
-        return jsonify({"error": "Ogiltig kvalitet."}), 400
-
+    try:
+        settings, quality = parse_download_settings(data)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     downloader = choose_downloader(url, requested)
-    job_id = uuid.uuid4().hex[:10]
+    return jsonify(create_job(url, downloader, folder, quality, settings))
 
-    with lock:
-        jobs[job_id] = {
-            "id": job_id,
-            "url": url,
-            "downloader": downloader,
-            "folder": folder,
-            "status": "queued",
-            "progress": 0,
-            "message": "Väntar…",
-            "output": [],
-        }
 
-    threading.Thread(
-        target=run_job,
-        args=(job_id, url, downloader, folder, quality),
-        daemon=True,
-    ).start()
-
-    return jsonify(jobs[job_id])
+@app.post("/api/download-all")
+def download_all():
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    requested = data.get("downloader", "auto")
+    folder = relative_folder(data.get("folder", ""))
+    if not re.match(r"^https?://", url):
+        return jsonify({"error": "Ange en giltig http/https-URL."}), 400
+    if requested not in ("auto", "yt-dlp", "svtplay-dl"):
+        return jsonify({"error": "Ogiltigt val av downloader."}), 400
+    try:
+        settings, quality = parse_download_settings(data)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    settings["all_episodes"] = True
+    downloader = choose_downloader(url, requested)
+    item = create_job(url, downloader, folder, quality, settings)
+    return jsonify({"jobs": [item], "count": 1})
 
 
 @app.get("/api/jobs/<job_id>")

@@ -76,3 +76,16 @@ small { display:block; margin-top:7px; color:#59656f; }
   .grid { grid-template-columns:1fr; }
   .wrap { padding-top:18px; }
 }
+
+.url-row { display:grid; grid-template-columns:1fr auto; gap:8px; }
+.secondary-action { width:auto; margin-top:0; white-space:nowrap; background:#eef1f4; color:#17202a; border:1px solid #cbd2d9; }
+.secondary-action:hover { background:#e3e7eb; opacity:1; }
+@media (max-width:650px) {
+  .url-row { grid-template-columns:1fr; }
+  .secondary-action { width:100%; }
+}
+
+.settings-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px 14px; margin-top:15px; }
+.check-row { display:flex; align-items:center; gap:9px; font-weight:600; margin:0; }
+.check-row input { width:auto; margin:0; }
+@media (max-width:650px) { .settings-grid { grid-template-columns:1fr; } }
