@@ -337,20 +337,6 @@ def upload():
     return jsonify({"uploaded": uploaded, "folder": (folder / Path(".")).as_posix() if folder.parts else ""})
 
 
-@app.get("/api/folders")
-def folders():
-    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    folders = [Path(DEFAULT_FOLDER)]
-
-    for p in DOWNLOAD_DIR.iterdir():
-        if p.is_dir():
-            rel = p.relative_to(DOWNLOAD_DIR)
-            if len(rel.parts) == 1 and rel not in folders:
-                folders.append(rel)
-
-    folders = sorted({p.as_posix() for p in folders}, key=str.casefold)
-    return jsonify(folders)
-
 
 @app.get("/api/files")
 def files():

@@ -162,16 +162,12 @@ async function startDownloadAll() {
 async function startDownload() {
   const url = document.querySelector('#url').value.trim();
   const error = document.querySelector('#error');
-  const newFolder = document.querySelector('#newFolder').value.trim();
-  const selectedFolder = document.querySelector('#folder').value;
 
   error.textContent = '';
   if (!url) {
     error.textContent = 'Klistra in en URL först.';
     return;
   }
-
-  const folder = newFolder || selectedFolder || 'Nedladdningar Osorterade';
 
   const res = await fetch('/api/download', {
     method: 'POST',
@@ -197,11 +193,10 @@ async function startDownload() {
 
   jobs.set(data.id, data);
   document.querySelector('#url').value = '';
-
-  // Refresh so a newly-created folder becomes selectable immediately.
   renderJobs();
 }
 
+async function loadUploadFolders() {
   const select = document.querySelector('#uploadFolder');
   const res = await fetch('/api/upload-folders');
   if (!res.ok) return;
@@ -317,7 +312,6 @@ function renderJobs() {
           <span class="status ${esc(j.status)}">${esc(statusText(j.status))}</span>
         </div>
         <div class="url">${esc(j.url)}</div>
-        <div class="folder-display">Mapp: ${esc(j.folder || '')}</div>
         <div class="bar"><i style="width:${Math.min(100, Math.max(0, j.progress || 0))}%"></i></div>
         <small>${Math.round(j.progress || 0)}% — ${esc(j.message || '')}</small>
         ${isError && output ? `<details class="error-details"><summary>Visa felmeddelande</summary><pre>${esc(output)}</pre></details>` : ''}
@@ -340,6 +334,7 @@ document.querySelector('#saveSettings').addEventListener('click', saveSettings);
   document.querySelector('#' + id).addEventListener('change', saveLocalDownloadSettings);
 });
 
+loadUploadFolders();
 loadLocalDownloadSettings();
 loadSettings();
 setInterval(poll, 1500);
