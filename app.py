@@ -409,6 +409,15 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
             cmd = [
                 "yt-dlp", "--newline", "-o", outtmpl,
                 "--write-subs", "--write-auto-subs", "--sub-langs", "all",
+                # YouTube can rate-limit subtitle requests (HTTP 429). Slow
+                # subtitle/request traffic down and retry HTTP failures with
+                # exponential backoff instead of failing immediately.
+                "--sleep-subtitles", "3",
+                "--sleep-requests", "1",
+                "--retries", "5",
+                "--extractor-retries", "5",
+                "--retry-sleep", "http:exp=2:30",
+                "--ignore-errors",
             ]
             if raw_subtitles:
                 cmd += ["--sub-format", "best"]

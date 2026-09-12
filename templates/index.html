@@ -322,13 +322,14 @@ function renderJobs() {
         <div class="url">${esc(j.url)}</div>
         <div class="bar"><i style="width:${Math.min(100, Math.max(0, j.progress || 0))}%"></i></div>
         <small>${Math.round(j.progress || 0)}% — ${esc(j.message || '')}</small>
-        ${isError && output ? `<details class="error-details"><summary>Visa felmeddelande</summary><pre>${esc(output)}</pre></details>` : ''}
+        ${isError && output ? `<details class="error-details" data-error-job="${esc(j.id)}" ${openErrorJobs.has(j.id) ? 'open' : ''}><summary>Visa felmeddelande</summary><pre>${esc(output)}</pre></details>` : ''}
         <button class="log-button" type="button" data-log-job="${esc(j.id)}">Visa loggar</button>
       </div>`;
   }).join('');
 }
 
 let openLogJobId = null;
+const openErrorJobs = new Set();
 
 function updateLogModal() {
   if (!openLogJobId) return;
@@ -363,6 +364,13 @@ function closeLogModal() {
 document.querySelector('#jobs').addEventListener('click', e => {
   const button = e.target.closest('[data-log-job]');
   if (button) openLogModal(button.dataset.logJob);
+});
+document.querySelector('#jobs').addEventListener('toggle', e => {
+  const details = e.target.closest('[data-error-job]');
+  if (!details) return;
+  const id = details.dataset.errorJob;
+  if (details.open) openErrorJobs.add(id);
+  else openErrorJobs.delete(id);
 });
 document.querySelector('#closeLog').addEventListener('click', closeLogModal);
 document.querySelector('#logModal').addEventListener('click', e => {
