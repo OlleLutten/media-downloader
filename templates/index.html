@@ -124,7 +124,7 @@ function statusText(status) {
     running: 'Laddar ner',
     done: 'Klar',
     error: 'Misslyckades'
-  })[status] || status || 'Väntar';
+  })[status] || status;
 }
 
 async function startDownloadAll() {
@@ -311,25 +311,19 @@ function renderJobs() {
   el.innerHTML = [...jobs.values()].reverse().map(j => {
     const isError = j.status === 'error';
     const isDone = j.status === 'done';
-    const output = Array.isArray(j.output) ? j.output.join('\n') : String(j.output || '');
-    const status = j.status || 'queued';
-    const title = j.title || (j.episode_index && j.episode_total
-      ? `Avsnitt ${j.episode_index}/${j.episode_total}`
-      : 'Nedladdning');
-    const message = j.message || (status === 'queued' ? 'Väntar…' : '');
-    const safeProgress = Math.min(100, Math.max(0, Number(j.progress) || 0));
+    const output = (j.output || []).join('\n');
 
     return `
       <div class="job ${isError ? 'job-error' : ''} ${isDone ? 'job-done' : ''}">
         <div class="jobtop">
-          <strong>${esc(title)}</strong>
-          <span class="status ${esc(status)}">${esc(statusText(status) || 'Väntar')}</span>
+          <strong>${esc(j.downloader)}</strong>
+          <span class="status ${esc(j.status)}">${esc(statusText(j.status))}</span>
         </div>
-        <div class="url">${esc(j.url || '')}</div>
-        <div class="bar"><i style="width:${safeProgress}%"></i></div>
-        <small>${Math.round(safeProgress)}% — ${esc(message)}</small>
+        <div class="url">${esc(j.url)}</div>
+        <div class="bar"><i style="width:${Math.min(100, Math.max(0, j.progress || 0))}%"></i></div>
+        <small>${Math.round(j.progress || 0)}% — ${esc(j.message || '')}</small>
         ${isError && output ? `<details class="error-details"><summary>Visa felmeddelande</summary><pre>${esc(output)}</pre></details>` : ''}
-        <button class="log-button" type="button" data-log-job="${esc(j.id || '')}">Visa loggar</button>
+        <button class="log-button" type="button" data-log-job="${esc(j.id)}">Visa loggar</button>
       </div>`;
   }).join('');
 }
@@ -343,10 +337,8 @@ function updateLogModal() {
     closeLogModal();
     return;
   }
-  const title = job.title || (job.episode_index && job.episode_total ? `Avsnitt ${job.episode_index}/${job.episode_total}` : 'Nedladdning');
-  const status = job.status || 'queued';
-  document.querySelector('#logModalTitle').textContent = `Loggar — ${title}`;
-  document.querySelector('#logModalStatus').textContent = `${statusText(status)} — ${Math.round(Number(job.progress) || 0)}% — ${job.message || ''}`;
+  document.querySelector('#logModalTitle').textContent = `Loggar — ${job.downloader}`;
+  document.querySelector('#logModalStatus').textContent = `${statusText(job.status)} — ${Math.round(job.progress || 0)}% — ${job.message || ''}`;
   document.querySelector('#logModalCommand').textContent = job.command || 'Kommando skapas när jobbet startar…';
   const output = document.querySelector('#logModalOutput');
   const wasNearBottom = output.scrollHeight - output.scrollTop - output.clientHeight < 80;
