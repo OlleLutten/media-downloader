@@ -316,7 +316,7 @@ function renderJobs() {
     return `
       <div class="job ${isError ? 'job-error' : ''} ${isDone ? 'job-done' : ''}">
         <div class="jobtop">
-          <strong>${esc(j.downloader)}</strong>
+          <strong>${esc(j.title || j.downloader)}</strong>
           <span class="status ${esc(j.status)}">${esc(statusText(j.status))}</span>
         </div>
         <div class="url">${esc(j.url)}</div>
@@ -337,7 +337,7 @@ function updateLogModal() {
     closeLogModal();
     return;
   }
-  document.querySelector('#logModalTitle').textContent = `Loggar — ${job.downloader}`;
+  document.querySelector('#logModalTitle').textContent = `Loggar — ${job.title || job.downloader}`;
   document.querySelector('#logModalStatus').textContent = `${statusText(job.status)} — ${Math.round(job.progress || 0)}% — ${job.message || ''}`;
   document.querySelector('#logModalCommand').textContent = job.command || 'Kommando skapas när jobbet startar…';
   const output = document.querySelector('#logModalOutput');

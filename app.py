@@ -254,6 +254,59 @@ def _extract_episode_urls(lines):
     return urls
 
 
+def _enumerate_collection_urls(url, downloader, settings, job_id=None):
+    """Return episode/video URLs in newest-first order."""
+    include_clips = bool(settings.get("include_clips", False))
+    tv4_token = read_tv4_token() if downloader == "svtplay-dl" else ""
+
+    if downloader == "svtplay-dl":
+        cmd = ["svtplay-dl", "--all-episodes", "--get-only-episode-url", "--reverse"]
+        if tv4_token:
+            cmd += ["--token", tv4_token]
+        if include_clips:
+            cmd += ["--include-clips"]
+    else:
+        cmd = ["yt-dlp", "--flat-playlist", "--playlist-reverse", "--print", "webpage_url", "--no-warnings", url]
+        # The URL is already the final argument for yt-dlp, so append it below
+        # only for the SVT branch.
+        if job_id:
+            _append_job_log(job_id, f"Urvalskommando: {shlex.join(cmd)}")
+            _append_job_log(job_id, "Hämtar listan med avsnitt/video-URL:er…")
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        lines = []
+        for raw_line in proc.stdout:
+            line = raw_line.strip()
+            if line:
+                lines.append(line)
+                if job_id:
+                    _append_job_log(job_id, line)
+        code = proc.wait()
+        urls = _extract_episode_urls(lines)
+        if code != 0 or not urls:
+            raise RuntimeError(f"Kunde inte hämta listan (kod {code}). Hittade {len(urls)} URL:er.")
+        return urls
+
+    cmd.append(url)
+    display = shlex.join(cmd).replace(tv4_token, "***REDACTED***") if tv4_token else shlex.join(cmd)
+    if job_id:
+        _append_job_log(job_id, f"Urvalskommando: {display}")
+        _append_job_log(job_id, "Hämtar listan med avsnitt…")
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    lines = []
+    for raw_line in proc.stdout:
+        line = raw_line.strip()
+        if not line:
+            continue
+        lines.append(line)
+        if job_id:
+            _append_job_log(job_id, line)
+    code = proc.wait()
+    urls = _extract_episode_urls(lines)
+    if code != 0 or not urls:
+        raise RuntimeError(f"Kunde inte hämta episodlistan (kod {code}). Hittade {len(urls)} episod-URL:er.")
+    return urls
+
+
 def run_job(job_id, url, downloader, folder, quality, settings=None):
     settings = settings or {}
     target_dir = DOWNLOAD_DIR
@@ -263,9 +316,6 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
         jobs[job_id]["status"] = "running"
         jobs[job_id]["message"] = f"Startar {downloader}…"
 
-    all_episodes = bool(settings.get("all_episodes", False))
-    all_last = int(settings.get("all_last", 0) or 0)
-    effective_all_episodes = all_episodes or all_last > 0
     include_clips = bool(settings.get("include_clips", False))
     chapters = True
     raw_subtitles = bool(settings.get("raw_subtitles", False))
@@ -280,130 +330,20 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
             svt_output_dir = target_dir / program_name if program_name else target_dir
             svt_output_dir.mkdir(parents=True, exist_ok=True)
 
-            common = ["svtplay-dl", "--output", str(svt_output_dir), "--all-subtitles"]
+            cmd = ["svtplay-dl", "--output", str(svt_output_dir), "--all-subtitles"]
             if tv4_token:
-                common += ["--token", tv4_token]
+                cmd += ["--token", tv4_token]
             if quality != "best":
-                common += ["--quality", quality]
+                cmd += ["--quality", quality]
             if chapters:
-                common += ["--chapters"]
+                cmd += ["--chapters"]
             if raw_subtitles:
-                common += ["--raw-subtitles"]
+                cmd += ["--raw-subtitles"]
             if thumbnail:
-                common += ["--thumbnail"]
-
-            if all_last > 0:
-                # Do not rely on svtplay-dl's --all-last implementation here.
-                # Enumerate episode URLs explicitly, newest first, then download
-                # exactly the requested number of URLs. This avoids cases where
-                # --all-last is ignored by a service-specific series-page parser.
-                enum_cmd = ["svtplay-dl", "--all-episodes", "--get-only-episode-url", "--reverse"]
-                if tv4_token:
-                    enum_cmd += ["--token", tv4_token]
-                if include_clips:
-                    enum_cmd += ["--include-clips"]
-                enum_cmd.append(url)
-                display_enum = shlex.join(enum_cmd).replace(tv4_token, "***REDACTED***") if tv4_token else shlex.join(enum_cmd)
-                _append_job_log(job_id, f"Urvalskommando: {display_enum}")
-                _append_job_log(job_id, f"Hämtar episodlistan för att välja exakt senaste {all_last} avsnitt…")
-
-                enum_proc = subprocess.Popen(
-                    enum_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, bufsize=1,
-                )
-                enum_lines = []
-                for raw_line in enum_proc.stdout:
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    enum_lines.append(line)
-                    recent_output.append(line)
-                    del recent_output[:-20]
-                    _append_job_log(job_id, line)
-                    with lock:
-                        jobs[job_id]["message"] = line[-500:]
-                        jobs[job_id]["output"] = list(recent_output)
-                enum_code = enum_proc.wait()
-                episode_urls = _extract_episode_urls(enum_lines)
-                if enum_code != 0 or not episode_urls:
-                    raise RuntimeError(
-                        f"Kunde inte hämta episodlistan (kod {enum_code}). Hittade {len(episode_urls)} episod-URL:er."
-                    )
-
-                selected = episode_urls[:all_last]
-                _append_job_log(job_id, f"Hittade {len(episode_urls)} avsnitt. Väljer exakt {len(selected)} senaste:")
-                for i, episode_url in enumerate(selected, 1):
-                    _append_job_log(job_id, f"  {i}. {episode_url}")
-
-                total = len(selected)
-                for index, episode_url in enumerate(selected):
-                    cmd = list(common) + [episode_url]
-                    display = shlex.join(cmd).replace(tv4_token, "***REDACTED***") if tv4_token else shlex.join(cmd)
-                    _append_job_log(job_id, f"Startar avsnitt {index + 1}/{total}")
-                    _append_job_log(job_id, f"Kommando: {display}")
-                    # _run_command logs the command too, so temporarily run the
-                    # actual command directly through the helper with redaction
-                    # handled by the log append below.
-                    proc = subprocess.Popen(
-                        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                        text=True, bufsize=1,
-                    )
-                    for raw_line in proc.stdout:
-                        line = raw_line.strip()
-                        if not line:
-                            continue
-                        recent_output.append(line)
-                        del recent_output[:-20]
-                        _append_job_log(job_id, line)
-                        p = None
-                        m = re.search(r"(\d+(?:\.\d+)?)%", line)
-                        if m:
-                            p = float(m.group(1))
-                        else:
-                            m = re.search(r"\[(\d+)\s*/\s*(\d+)\]", line)
-                            if m:
-                                cur, tot = int(m.group(1)), int(m.group(2))
-                                if tot:
-                                    p = cur * 100 / tot
-                        with lock:
-                            jobs[job_id]["message"] = line[-500:]
-                            jobs[job_id]["output"] = list(recent_output)
-                            if p is not None:
-                                jobs[job_id]["progress"] = (index + p / 100.0) * 100.0 / total
-                    code = proc.wait()
-                    if code != 0:
-                        raise RuntimeError(f"Avsnitt {index + 1}/{total} misslyckades (kod {code}).")
-
-            elif effective_all_episodes:
-                cmd = list(common) + ["--all-episodes"]
-                if include_clips:
-                    cmd += ["--include-clips"]
-                display = shlex.join(cmd).replace(tv4_token, "***REDACTED***") if tv4_token else shlex.join(cmd)
-                _append_job_log(job_id, f"Kommando: {display}")
-                code = _run_command(job_id, cmd, recent_output)
-                if code != 0:
-                    raise RuntimeError(f"Nedladdningen misslyckades (kod {code}).")
-            else:
-                cmd = list(common) + [url]
-                display = shlex.join(cmd).replace(tv4_token, "***REDACTED***") if tv4_token else shlex.join(cmd)
-                _append_job_log(job_id, f"Kommando: {display}")
-                code = _run_command(job_id, cmd, recent_output)
-                if code != 0:
-                    raise RuntimeError(f"Nedladdningen misslyckades (kod {code}).")
-
-            if program_name and svt_output_dir.exists():
-                for path in list(svt_output_dir.iterdir()):
-                    if not path.is_file():
-                        continue
-                    pretty = _humanize_download_name(path.name)
-                    if pretty and pretty != path.name:
-                        destination = path.with_name(pretty)
-                        if not destination.exists():
-                            try:
-                                path.rename(destination)
-                            except OSError:
-                                pass
-
+                cmd += ["--thumbnail"]
+            if include_clips:
+                cmd += ["--include-clips"]
+            cmd.append(url)
         else:
             outtmpl = str(target_dir / "%(playlist_title|movies)s" / "%(title)s [%(id)s].%(ext)s")
             cmd = [
@@ -420,18 +360,33 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                 cmd += ["--write-thumbnail"]
             if embed_thumbnail:
                 cmd += ["--embed-thumbnail"]
-            if effective_all_episodes and all_last > 0:
-                cmd += ["--playlist-reverse", "--playlist-end", str(all_last)]
             if quality == "best":
                 cmd += ["-f", "bv*+ba/b"]
             else:
                 cmd += ["-f", f"bv*[height<={quality}]+ba/b[height<={quality}]"]
             cmd += ["--merge-output-format", "mp4", url]
-            display = shlex.join(cmd)
-            _append_job_log(job_id, f"Kommando: {display}")
-            code = _run_command(job_id, cmd, recent_output)
-            if code != 0:
-                raise RuntimeError(f"Nedladdningen misslyckades (kod {code}).")
+
+        display = shlex.join(cmd).replace(tv4_token, "***REDACTED***") if tv4_token else shlex.join(cmd)
+        _append_job_log(job_id, f"Kommando: {display}")
+        code = _run_command(job_id, cmd, recent_output)
+        if code != 0:
+            raise RuntimeError(f"Nedladdningen misslyckades (kod {code}).")
+
+        if downloader == "svtplay-dl":
+            program_name = get_svt_program_name(url)
+            svt_output_dir = target_dir / program_name if program_name else target_dir
+            if program_name and svt_output_dir.exists():
+                for path in list(svt_output_dir.iterdir()):
+                    if not path.is_file():
+                        continue
+                    pretty = _humanize_download_name(path.name)
+                    if pretty and pretty != path.name:
+                        destination = path.with_name(pretty)
+                        if not destination.exists():
+                            try:
+                                path.rename(destination)
+                            except OSError:
+                                pass
 
         with lock:
             jobs[job_id]["output"] = recent_output
@@ -471,12 +426,20 @@ def parse_download_settings(data):
     }, quality
 
 
-def create_job(url, downloader, quality, settings):
+def create_job(url, downloader, quality, settings, title="Nedladdning"):
     job_id = uuid.uuid4().hex[:10]
     with lock:
         jobs[job_id] = {
-            "id": job_id, "url": url, "downloader": downloader,
-            "status": "queued", "progress": 0, "message": "Väntar…", "output": [], "log": [], "command": "",
+            "id": job_id,
+            "url": url,
+            "downloader": downloader,
+            "title": title,
+            "status": "queued",
+            "progress": 0,
+            "message": "Väntar…",
+            "output": [],
+            "log": [],
+            "command": "",
         }
     threading.Thread(
         target=run_job,
@@ -484,6 +447,29 @@ def create_job(url, downloader, quality, settings):
         daemon=True,
     ).start()
     return jobs[job_id]
+
+
+def create_collection_jobs(url, downloader, quality, settings, latest_n=0):
+    """Enumerate a collection and create one independent job per item."""
+    urls = _enumerate_collection_urls(url, downloader, settings)
+    if latest_n > 0:
+        urls = urls[:latest_n]
+        mode_label = f"Senaste {len(urls)} avsnitt"
+    else:
+        mode_label = "Alla avsnitt"
+
+    if not urls:
+        raise RuntimeError("Hittade inga avsnitt/video-URL:er.")
+
+    total = len(urls)
+    created = []
+    for index, item_url in enumerate(urls, 1):
+        title = f"Avsnitt {index}/{total}" if latest_n > 0 else f"Avsnitt {index}/{total} (Alla avsnitt)"
+        child_settings = dict(settings)
+        child_settings["all_episodes"] = False
+        child_settings["all_last"] = 0
+        created.append(create_job(item_url, downloader, quality, child_settings, title=title))
+    return created, mode_label
 
 
 @app.post("/api/download")
@@ -500,7 +486,14 @@ def download():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     downloader = choose_downloader(url, requested)
-    return jsonify(create_job(url, downloader, quality, settings))
+    try:
+        if settings["all_last"] > 0:
+            items, mode = create_collection_jobs(url, downloader, quality, settings, latest_n=settings["all_last"])
+            return jsonify({"jobs": items, "count": len(items), "mode": mode})
+        item = create_job(url, downloader, quality, settings)
+        return jsonify(item)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 
 @app.post("/api/download-all")
@@ -517,12 +510,13 @@ def download_all():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     settings["all_episodes"] = True
-    # This button explicitly means *all* episodes, even if the "Senaste NN"
-    # setting contains a number.
     settings["all_last"] = 0
     downloader = choose_downloader(url, requested)
-    item = create_job(url, downloader, quality, settings)
-    return jsonify({"jobs": [item], "count": 1})
+    try:
+        items, mode = create_collection_jobs(url, downloader, quality, settings, latest_n=0)
+        return jsonify({"jobs": items, "count": len(items), "mode": mode})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 
 @app.get("/api/jobs/<job_id>")
