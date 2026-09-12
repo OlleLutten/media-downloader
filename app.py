@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import shlex
 import subprocess
 import threading
 import uuid
@@ -206,6 +207,10 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
 
     all_episodes = bool(settings.get("all_episodes", False))
     all_last = int(settings.get("all_last", 0) or 0)
+    # Entering a number in "Senaste NN" is itself a request for playlist/series
+    # mode. This keeps the setting useful even when the main "Ladda ner" button
+    # is used instead of "Ladda ner alla avsnitt".
+    effective_all_episodes = all_episodes or all_last > 0
     include_clips = bool(settings.get("include_clips", False))
     chapters = True
     raw_subtitles = bool(settings.get("raw_subtitles", False))
@@ -230,7 +235,7 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
             cmd += ["--raw-subtitles"]
         if thumbnail:
             cmd += ["--thumbnail"]
-        if all_episodes:
+        if effective_all_episodes:
             cmd += ["--all-episodes"]
             if all_last > 0:
                 cmd += ["--all-last", str(all_last)]
@@ -255,7 +260,7 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
             cmd += ["--write-thumbnail"]
         if embed_thumbnail:
             cmd += ["--embed-thumbnail"]
-        if all_episodes and all_last > 0:
+        if effective_all_episodes and all_last > 0:
             cmd += ["--playlist-reverse", "--playlist-end", str(all_last)]
         if quality == "best":
             cmd += ["-f", "bv*+ba/b"]
@@ -264,6 +269,11 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
         cmd += ["--merge-output-format", "mp4", url]
 
     recent_output = []
+    display_command = shlex.join(cmd).replace(tv4_token, "***REDACTED***") if downloader == "svtplay-dl" and tv4_token else shlex.join(cmd)
+    log_output = [f"Kommando: {display_command}"]
+    with lock:
+        jobs[job_id]["command"] = display_command
+        jobs[job_id]["log"] = log_output
     try:
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -275,6 +285,8 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                 continue
             recent_output.append(line)
             recent_output = recent_output[-20:]
+            log_output.append(line)
+            log_output = log_output[-2000:]
             progress = None
             m = re.search(r"(\d+(?:\.\d+)?)%", line)
             if m:
@@ -288,6 +300,7 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
             with lock:
                 jobs[job_id]["message"] = line[-500:]
                 jobs[job_id]["output"] = recent_output
+                jobs[job_id]["log"] = log_output
                 if progress is not None:
                     jobs[job_id]["progress"] = progress
         code = proc.wait()
@@ -315,6 +328,7 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
         success = code == 0 and not explicit_error
         with lock:
             jobs[job_id]["output"] = recent_output
+            jobs[job_id]["log"] = log_output
             if success:
                 jobs[job_id]["status"] = "done"
                 jobs[job_id]["progress"] = 100
@@ -330,6 +344,7 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
             jobs[job_id]["status"] = "error"
             jobs[job_id]["message"] = str(e)[:500]
             jobs[job_id]["output"] = recent_output
+            jobs[job_id]["log"] = log_output
 
 
 @app.get("/")
@@ -363,7 +378,7 @@ def create_job(url, downloader, quality, settings):
     with lock:
         jobs[job_id] = {
             "id": job_id, "url": url, "downloader": downloader,
-            "status": "queued", "progress": 0, "message": "Väntar…", "output": [],
+            "status": "queued", "progress": 0, "message": "Väntar…", "output": [], "log": [], "command": "",
         }
     threading.Thread(
         target=run_job,
@@ -404,6 +419,9 @@ def download_all():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     settings["all_episodes"] = True
+    # This button explicitly means *all* episodes, even if the "Senaste NN"
+    # setting contains a number.
+    settings["all_last"] = 0
     downloader = choose_downloader(url, requested)
     item = create_job(url, downloader, quality, settings)
     return jsonify({"jobs": [item], "count": 1})

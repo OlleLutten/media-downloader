@@ -89,3 +89,16 @@ small { display:block; margin-top:7px; color:#59656f; }
 .check-row { display:flex; align-items:center; gap:9px; font-weight:600; margin:0; }
 .check-row input { width:auto; margin:0; }
 @media (max-width:650px) { .settings-grid { grid-template-columns:1fr; } }
+
+.log-details { margin-top:10px; }
+.log-details summary {
+  display:inline-block; cursor:pointer; padding:7px 10px; border:1px solid #cbd2d9;
+  border-radius:8px; background:#eef1f4; color:#17202a; font-weight:650;
+}
+.log-details summary:hover { background:#e3e7eb; }
+.log-details pre {
+  margin:8px 0 0; padding:10px; background:#1e2328; color:#eee;
+  border-radius:8px; overflow:auto; max-height:360px; white-space:pre-wrap;
+  font:12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.command-label { margin-top:10px; font-size:12px; font-weight:700; color:#59656f; }

@@ -64,7 +64,7 @@
       </div>
     </div>
 
-    <p class="hint"><strong>Automatisk undermapp:</strong> Nedladdningar sorteras automatiskt efter program/serie. För svtplay-dl används <code>--subfolder</code>. YouTube-spellistor sorteras efter spellistans namn och enskilda videor hamnar i <code>movies</code>.<br><br>«Senaste NN» och «Inkludera klipp» används främst av svtplay-dl. 0 på «Senaste NN» betyder alla avsnitt. På YouTube används «Senaste NN» för att ta de sista posterna i en spellista. Kapitel och thumbnail laddas alltid ner automatiskt. Inbäddning av thumbnail stöds av yt-dlp.</p>
+    <p class="hint"><strong>Automatisk undermapp:</strong> Nedladdningar sorteras automatiskt efter program/serie. YouTube-spellistor sorteras efter spellistans namn och enskilda videor hamnar i <code>movies</code>.<br><br>«Senaste NN» gör automatiskt att serie-/spellisteläget används. Om du skriver t.ex. <strong>4</strong> och trycker «Ladda ner» laddas bara de senaste fyra avsnitten ner. 0 betyder vanligt läge. «Inkludera klipp» gäller när flera avsnitt hämtas. Kapitel och thumbnail laddas alltid ner automatiskt.</p>
 
     <label for="tv4Token">TV4 Play-token</label>
     <input id="tv4Token" type="password" autocomplete="new-password" placeholder="Token sparas på servern">
@@ -220,6 +220,13 @@ async function uploadFiles() {
   }
 }
 
+function updateDownloadButtonLabel() {
+  const input = document.querySelector('#allLast');
+  const button = document.querySelector('#start');
+  const n = Number(input.value || 0);
+  button.textContent = n > 0 ? `Ladda ner senaste ${n} avsnitt` : 'Ladda ner';
+}
+
 function loadLocalDownloadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem('mediaDownloaderSettings') || '{}');
@@ -229,6 +236,7 @@ function loadLocalDownloadSettings() {
     document.querySelector('#includeClips').checked = !!saved.includeClips;
     if (saved.allLast !== undefined) document.querySelector('#allLast').value = saved.allLast;
   } catch (_) {}
+  updateDownloadButtonLabel();
 }
 
 function saveLocalDownloadSettings() {
@@ -297,6 +305,13 @@ function renderJobs() {
         <div class="bar"><i style="width:${Math.min(100, Math.max(0, j.progress || 0))}%"></i></div>
         <small>${Math.round(j.progress || 0)}% — ${esc(j.message || '')}</small>
         ${isError && output ? `<details class="error-details"><summary>Visa felmeddelande</summary><pre>${esc(output)}</pre></details>` : ''}
+        <details class="log-details">
+          <summary>Visa loggar</summary>
+          <div class="command-label">Kommando</div>
+          <pre>${esc(j.command || 'Kommando skapas när jobbet startar…')}</pre>
+          <div class="command-label">Logg</div>
+          <pre>${esc((j.log || []).join('\n') || 'Ingen logg ännu.')}</pre>
+        </details>
       </div>`;
   }).join('');
 }
@@ -313,7 +328,10 @@ document.querySelector('#url').addEventListener('keydown', e => {
 });
 document.querySelector('#saveSettings').addEventListener('click', saveSettings);
 ['quality','rawSubtitles','embedThumbnail','includeClips','allLast'].forEach(id => {
-  document.querySelector('#' + id).addEventListener('change', saveLocalDownloadSettings);
+  document.querySelector('#' + id).addEventListener('change', () => {
+    saveLocalDownloadSettings();
+    if (id === 'allLast') updateDownloadButtonLabel();
+  });
 });
 
 loadUploadFolders();
