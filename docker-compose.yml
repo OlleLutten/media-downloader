@@ -4,7 +4,7 @@ services:
     container_name: media-downloader
     restart: unless-stopped
     ports:
-      - "30120:8080"
+      - "8083:8080"
     volumes:
       - /mnt/Hem-NAS/media/UWTD-Nedladdningar:/downloads
       - /mnt/Hem-NAS/media/uppladdningar:/uploads
