@@ -78,6 +78,23 @@
     <div id="jobs" class="empty">Inga pågående nedladdningar.</div>
   </section>
 
+<div id="logModal" class="log-modal hidden" role="dialog" aria-modal="true" aria-labelledby="logModalTitle">
+  <div class="log-modal-backdrop" data-close-log></div>
+  <section class="log-modal-card">
+    <div class="log-modal-header">
+      <div>
+        <h2 id="logModalTitle">Loggar</h2>
+        <div id="logModalStatus" class="log-modal-status"></div>
+      </div>
+      <button id="closeLog" class="secondary-action log-close" type="button">Stäng</button>
+    </div>
+    <div class="command-label">Kommando</div>
+    <pre id="logModalCommand"></pre>
+    <div class="command-label">Logg</div>
+    <pre id="logModalOutput" class="log-modal-output"></pre>
+  </section>
+</div>
+
   <section class="card">
     <h2>Ladda upp</h2>
     <label for="uploadFolder">Målmapp på servern</label>
@@ -279,6 +296,7 @@ async function poll() {
     if (res.ok) jobs.set(id, await res.json());
   }
   renderJobs();
+  updateLogModal();
 }
 
 function renderJobs() {
@@ -305,16 +323,54 @@ function renderJobs() {
         <div class="bar"><i style="width:${Math.min(100, Math.max(0, j.progress || 0))}%"></i></div>
         <small>${Math.round(j.progress || 0)}% — ${esc(j.message || '')}</small>
         ${isError && output ? `<details class="error-details"><summary>Visa felmeddelande</summary><pre>${esc(output)}</pre></details>` : ''}
-        <details class="log-details">
-          <summary>Visa loggar</summary>
-          <div class="command-label">Kommando</div>
-          <pre>${esc(j.command || 'Kommando skapas när jobbet startar…')}</pre>
-          <div class="command-label">Logg</div>
-          <pre>${esc((j.log || []).join('\n') || 'Ingen logg ännu.')}</pre>
-        </details>
+        <button class="log-button" type="button" data-log-job="${esc(j.id)}">Visa loggar</button>
       </div>`;
   }).join('');
 }
+
+let openLogJobId = null;
+
+function updateLogModal() {
+  if (!openLogJobId) return;
+  const job = jobs.get(openLogJobId);
+  if (!job) {
+    closeLogModal();
+    return;
+  }
+  document.querySelector('#logModalTitle').textContent = `Loggar — ${job.downloader}`;
+  document.querySelector('#logModalStatus').textContent = `${statusText(job.status)} — ${Math.round(job.progress || 0)}% — ${job.message || ''}`;
+  document.querySelector('#logModalCommand').textContent = job.command || 'Kommando skapas när jobbet startar…';
+  const output = document.querySelector('#logModalOutput');
+  const wasNearBottom = output.scrollHeight - output.scrollTop - output.clientHeight < 80;
+  output.textContent = (job.log || []).join('\n') || 'Ingen logg ännu.';
+  if (wasNearBottom) output.scrollTop = output.scrollHeight;
+}
+
+function openLogModal(jobId) {
+  if (!jobs.has(jobId)) return;
+  openLogJobId = jobId;
+  document.querySelector('#logModal').classList.remove('hidden');
+  document.body.classList.add('modal-open');
+  updateLogModal();
+}
+
+function closeLogModal() {
+  openLogJobId = null;
+  document.querySelector('#logModal').classList.add('hidden');
+  document.body.classList.remove('modal-open');
+}
+
+document.querySelector('#jobs').addEventListener('click', e => {
+  const button = e.target.closest('[data-log-job]');
+  if (button) openLogModal(button.dataset.logJob);
+});
+document.querySelector('#closeLog').addEventListener('click', closeLogModal);
+document.querySelector('#logModal').addEventListener('click', e => {
+  if (e.target.matches('[data-close-log]')) closeLogModal();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && openLogJobId) closeLogModal();
+});
 
 document.querySelector('#start').addEventListener('click', startDownload);
 document.querySelector('#downloadAll').addEventListener('click', startDownloadAll);

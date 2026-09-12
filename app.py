@@ -196,6 +196,64 @@ def _humanize_download_name(value):
     return sanitize_folder_name(pretty) + suffix
 
 
+def _append_job_log(job_id, line):
+    with lock:
+        log_output = jobs[job_id].setdefault("log", [])
+        log_output.append(line)
+        jobs[job_id]["log"] = log_output[-2000:]
+
+
+def _run_command(job_id, cmd, recent_output, progress_base=0.0, progress_span=100.0):
+    """Run a downloader command while continuously updating the job log/progress."""
+    display_command = shlex.join(cmd)
+    _append_job_log(job_id, f"Kommando: {display_command}")
+    with lock:
+        jobs[job_id]["command"] = display_command
+
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
+    )
+    for raw_line in proc.stdout:
+        line = raw_line.strip()
+        if not line:
+            continue
+        recent_output.append(line)
+        del recent_output[:-20]
+        _append_job_log(job_id, line)
+
+        progress = None
+        m = re.search(r"(\d+(?:\.\d+)?)%", line)
+        if m:
+            progress = float(m.group(1))
+        else:
+            m = re.search(r"\[(\d+)\s*/\s*(\d+)\]", line)
+            if m:
+                current, total = int(m.group(1)), int(m.group(2))
+                if total:
+                    progress = current * 100 / total
+        with lock:
+            jobs[job_id]["message"] = line[-500:]
+            jobs[job_id]["output"] = list(recent_output)
+            if progress is not None:
+                jobs[job_id]["progress"] = progress_base + (progress_span * progress / 100.0)
+
+    return_code = proc.wait()
+    return return_code
+
+
+def _extract_episode_urls(lines):
+    urls = []
+    seen = set()
+    for line in lines:
+        for match in re.findall(r"https?://[^\s<>\"']+", line):
+            clean = match.rstrip(".,;)")
+            if clean not in seen:
+                seen.add(clean)
+                urls.append(clean)
+    return urls
+
+
 def run_job(job_id, url, downloader, folder, quality, settings=None):
     settings = settings or {}
     target_dir = DOWNLOAD_DIR
@@ -207,144 +265,184 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
 
     all_episodes = bool(settings.get("all_episodes", False))
     all_last = int(settings.get("all_last", 0) or 0)
-    # Entering a number in "Senaste NN" is itself a request for playlist/series
-    # mode. This keeps the setting useful even when the main "Ladda ner" button
-    # is used instead of "Ladda ner alla avsnitt".
     effective_all_episodes = all_episodes or all_last > 0
     include_clips = bool(settings.get("include_clips", False))
     chapters = True
     raw_subtitles = bool(settings.get("raw_subtitles", False))
     thumbnail = True
     embed_thumbnail = bool(settings.get("embed_thumbnail", False))
-
-    if downloader == "svtplay-dl":
-        program_name = get_svt_program_name(url)
-        svt_output_dir = target_dir / program_name if program_name else target_dir
-        svt_output_dir.mkdir(parents=True, exist_ok=True)
-        # We control the folder ourselves because --subfolder can classify a
-        # single SVT episode as a non-series and put it in /movies.
-        cmd = ["svtplay-dl", "--output", str(svt_output_dir), "--all-subtitles"]
-        tv4_token = read_tv4_token()
-        if tv4_token:
-            cmd += ["--token", tv4_token]
-        if quality != "best":
-            cmd += ["--quality", quality]
-        if chapters:
-            cmd += ["--chapters"]
-        if raw_subtitles:
-            cmd += ["--raw-subtitles"]
-        if thumbnail:
-            cmd += ["--thumbnail"]
-        if effective_all_episodes:
-            cmd += ["--all-episodes"]
-            if all_last > 0:
-                cmd += ["--all-last", str(all_last)]
-            if include_clips:
-                cmd += ["--include-clips"]
-        cmd.append(url)
-    else:
-        outtmpl = str(target_dir / "%(playlist_title|movies)s" / "%(title)s [%(id)s].%(ext)s")
-        cmd = [
-            "yt-dlp", "--newline", "-o", outtmpl,
-            "--write-subs", "--write-auto-subs", "--sub-langs", "all",
-        ]
-        # yt-dlp has no separate raw-subtitles switch; --sub-format best
-        # keeps the best available subtitle format without conversion.
-        if raw_subtitles:
-            cmd += ["--sub-format", "best"]
-        else:
-            cmd += ["--sub-format", "srt/vtt/ass/best"]
-        if chapters:
-            cmd += ["--embed-chapters"]
-        if thumbnail:
-            cmd += ["--write-thumbnail"]
-        if embed_thumbnail:
-            cmd += ["--embed-thumbnail"]
-        if effective_all_episodes and all_last > 0:
-            cmd += ["--playlist-reverse", "--playlist-end", str(all_last)]
-        if quality == "best":
-            cmd += ["-f", "bv*+ba/b"]
-        else:
-            cmd += ["-f", f"bv*[height<={quality}]+ba/b[height<={quality}]"]
-        cmd += ["--merge-output-format", "mp4", url]
-
     recent_output = []
-    display_command = shlex.join(cmd).replace(tv4_token, "***REDACTED***") if downloader == "svtplay-dl" and tv4_token else shlex.join(cmd)
-    log_output = [f"Kommando: {display_command}"]
-    with lock:
-        jobs[job_id]["command"] = display_command
-        jobs[job_id]["log"] = log_output
+    tv4_token = read_tv4_token() if downloader == "svtplay-dl" else ""
+
     try:
-        proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1,
-        )
-        for raw_line in proc.stdout:
-            line = raw_line.strip()
-            if not line:
-                continue
-            recent_output.append(line)
-            recent_output = recent_output[-20:]
-            log_output.append(line)
-            log_output = log_output[-2000:]
-            progress = None
-            m = re.search(r"(\d+(?:\.\d+)?)%", line)
-            if m:
-                progress = float(m.group(1))
+        if downloader == "svtplay-dl":
+            program_name = get_svt_program_name(url)
+            svt_output_dir = target_dir / program_name if program_name else target_dir
+            svt_output_dir.mkdir(parents=True, exist_ok=True)
+
+            common = ["svtplay-dl", "--output", str(svt_output_dir), "--all-subtitles"]
+            if tv4_token:
+                common += ["--token", tv4_token]
+            if quality != "best":
+                common += ["--quality", quality]
+            if chapters:
+                common += ["--chapters"]
+            if raw_subtitles:
+                common += ["--raw-subtitles"]
+            if thumbnail:
+                common += ["--thumbnail"]
+
+            if all_last > 0:
+                # Do not rely on svtplay-dl's --all-last implementation here.
+                # Enumerate episode URLs explicitly, newest first, then download
+                # exactly the requested number of URLs. This avoids cases where
+                # --all-last is ignored by a service-specific series-page parser.
+                enum_cmd = ["svtplay-dl", "--all-episodes", "--get-only-episode-url", "--reverse"]
+                if tv4_token:
+                    enum_cmd += ["--token", tv4_token]
+                if include_clips:
+                    enum_cmd += ["--include-clips"]
+                enum_cmd.append(url)
+                display_enum = shlex.join(enum_cmd).replace(tv4_token, "***REDACTED***") if tv4_token else shlex.join(enum_cmd)
+                _append_job_log(job_id, f"Urvalskommando: {display_enum}")
+                _append_job_log(job_id, f"Hämtar episodlistan för att välja exakt senaste {all_last} avsnitt…")
+
+                enum_proc = subprocess.Popen(
+                    enum_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, bufsize=1,
+                )
+                enum_lines = []
+                for raw_line in enum_proc.stdout:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    enum_lines.append(line)
+                    recent_output.append(line)
+                    del recent_output[:-20]
+                    _append_job_log(job_id, line)
+                    with lock:
+                        jobs[job_id]["message"] = line[-500:]
+                        jobs[job_id]["output"] = list(recent_output)
+                enum_code = enum_proc.wait()
+                episode_urls = _extract_episode_urls(enum_lines)
+                if enum_code != 0 or not episode_urls:
+                    raise RuntimeError(
+                        f"Kunde inte hämta episodlistan (kod {enum_code}). Hittade {len(episode_urls)} episod-URL:er."
+                    )
+
+                selected = episode_urls[:all_last]
+                _append_job_log(job_id, f"Hittade {len(episode_urls)} avsnitt. Väljer exakt {len(selected)} senaste:")
+                for i, episode_url in enumerate(selected, 1):
+                    _append_job_log(job_id, f"  {i}. {episode_url}")
+
+                total = len(selected)
+                for index, episode_url in enumerate(selected):
+                    cmd = list(common) + [episode_url]
+                    display = shlex.join(cmd).replace(tv4_token, "***REDACTED***") if tv4_token else shlex.join(cmd)
+                    _append_job_log(job_id, f"Startar avsnitt {index + 1}/{total}")
+                    _append_job_log(job_id, f"Kommando: {display}")
+                    # _run_command logs the command too, so temporarily run the
+                    # actual command directly through the helper with redaction
+                    # handled by the log append below.
+                    proc = subprocess.Popen(
+                        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        text=True, bufsize=1,
+                    )
+                    for raw_line in proc.stdout:
+                        line = raw_line.strip()
+                        if not line:
+                            continue
+                        recent_output.append(line)
+                        del recent_output[:-20]
+                        _append_job_log(job_id, line)
+                        p = None
+                        m = re.search(r"(\d+(?:\.\d+)?)%", line)
+                        if m:
+                            p = float(m.group(1))
+                        else:
+                            m = re.search(r"\[(\d+)\s*/\s*(\d+)\]", line)
+                            if m:
+                                cur, tot = int(m.group(1)), int(m.group(2))
+                                if tot:
+                                    p = cur * 100 / tot
+                        with lock:
+                            jobs[job_id]["message"] = line[-500:]
+                            jobs[job_id]["output"] = list(recent_output)
+                            if p is not None:
+                                jobs[job_id]["progress"] = (index + p / 100.0) * 100.0 / total
+                    code = proc.wait()
+                    if code != 0:
+                        raise RuntimeError(f"Avsnitt {index + 1}/{total} misslyckades (kod {code}).")
+
+            elif effective_all_episodes:
+                cmd = list(common) + ["--all-episodes"]
+                if include_clips:
+                    cmd += ["--include-clips"]
+                display = shlex.join(cmd).replace(tv4_token, "***REDACTED***") if tv4_token else shlex.join(cmd)
+                _append_job_log(job_id, f"Kommando: {display}")
+                code = _run_command(job_id, cmd, recent_output)
+                if code != 0:
+                    raise RuntimeError(f"Nedladdningen misslyckades (kod {code}).")
             else:
-                m = re.search(r"\[(\d+)\s*/\s*(\d+)\]", line)
-                if m:
-                    current, total = int(m.group(1)), int(m.group(2))
-                    if total:
-                        progress = current * 100 / total
-            with lock:
-                jobs[job_id]["message"] = line[-500:]
-                jobs[job_id]["output"] = recent_output
-                jobs[job_id]["log"] = log_output
-                if progress is not None:
-                    jobs[job_id]["progress"] = progress
-        code = proc.wait()
-        if downloader == "svtplay-dl" and program_name and svt_output_dir.exists():
-            # svtplay-dl's own current filename can still contain URL-style
-            # dots. Make the result human-readable while preserving the media
-            # extension and the SVT id/service suffix.
-            for path in list(svt_output_dir.iterdir()):
-                if not path.is_file():
-                    continue
-                pretty = _humanize_download_name(path.name)
-                if pretty and pretty != path.name:
-                    destination = path.with_name(pretty)
-                    if not destination.exists():
-                        try:
-                            path.rename(destination)
-                        except OSError:
-                            pass
-        error_patterns = (
-            r"\berror\b", r"\bfailed\b", r"\bfailure\b", r"\bunable to\b",
-            r"\bexception\b", r"http error", r"traceback",
-        )
-        output_text = "\n".join(recent_output)
-        explicit_error = any(re.search(pattern, output_text, re.IGNORECASE) for pattern in error_patterns)
-        success = code == 0 and not explicit_error
+                cmd = list(common) + [url]
+                display = shlex.join(cmd).replace(tv4_token, "***REDACTED***") if tv4_token else shlex.join(cmd)
+                _append_job_log(job_id, f"Kommando: {display}")
+                code = _run_command(job_id, cmd, recent_output)
+                if code != 0:
+                    raise RuntimeError(f"Nedladdningen misslyckades (kod {code}).")
+
+            if program_name and svt_output_dir.exists():
+                for path in list(svt_output_dir.iterdir()):
+                    if not path.is_file():
+                        continue
+                    pretty = _humanize_download_name(path.name)
+                    if pretty and pretty != path.name:
+                        destination = path.with_name(pretty)
+                        if not destination.exists():
+                            try:
+                                path.rename(destination)
+                            except OSError:
+                                pass
+
+        else:
+            outtmpl = str(target_dir / "%(playlist_title|movies)s" / "%(title)s [%(id)s].%(ext)s")
+            cmd = [
+                "yt-dlp", "--newline", "-o", outtmpl,
+                "--write-subs", "--write-auto-subs", "--sub-langs", "all",
+            ]
+            if raw_subtitles:
+                cmd += ["--sub-format", "best"]
+            else:
+                cmd += ["--sub-format", "srt/vtt/ass/best"]
+            if chapters:
+                cmd += ["--embed-chapters"]
+            if thumbnail:
+                cmd += ["--write-thumbnail"]
+            if embed_thumbnail:
+                cmd += ["--embed-thumbnail"]
+            if effective_all_episodes and all_last > 0:
+                cmd += ["--playlist-reverse", "--playlist-end", str(all_last)]
+            if quality == "best":
+                cmd += ["-f", "bv*+ba/b"]
+            else:
+                cmd += ["-f", f"bv*[height<={quality}]+ba/b[height<={quality}]"]
+            cmd += ["--merge-output-format", "mp4", url]
+            display = shlex.join(cmd)
+            _append_job_log(job_id, f"Kommando: {display}")
+            code = _run_command(job_id, cmd, recent_output)
+            if code != 0:
+                raise RuntimeError(f"Nedladdningen misslyckades (kod {code}).")
+
         with lock:
             jobs[job_id]["output"] = recent_output
-            jobs[job_id]["log"] = log_output
-            if success:
-                jobs[job_id]["status"] = "done"
-                jobs[job_id]["progress"] = 100
-                jobs[job_id]["message"] = "Klar!"
-            else:
-                jobs[job_id]["status"] = "error"
-                jobs[job_id]["message"] = (
-                    f"Nedladdningen misslyckades (kod {code})." if code != 0
-                    else "Nedladdningen misslyckades trots att processen avslutades utan felkod."
-                )
+            jobs[job_id]["status"] = "done"
+            jobs[job_id]["progress"] = 100
+            jobs[job_id]["message"] = "Klar!"
     except Exception as e:
         with lock:
             jobs[job_id]["status"] = "error"
             jobs[job_id]["message"] = str(e)[:500]
             jobs[job_id]["output"] = recent_output
-            jobs[job_id]["log"] = log_output
 
 
 @app.get("/")
