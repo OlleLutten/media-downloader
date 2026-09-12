@@ -89,3 +89,49 @@ small { display:block; margin-top:7px; color:#59656f; }
 .check-row { display:flex; align-items:center; gap:9px; font-weight:600; margin:0; }
 .check-row input { width:auto; margin:0; }
 @media (max-width:650px) { .settings-grid { grid-template-columns:1fr; } }
+
+.log-details { margin-top:10px; }
+.log-details summary {
+  display:inline-block; cursor:pointer; padding:7px 10px; border:1px solid #cbd2d9;
+  border-radius:8px; background:#eef1f4; color:#17202a; font-weight:650;
+}
+.log-details summary:hover { background:#e3e7eb; }
+.log-details pre {
+  margin:8px 0 0; padding:10px; background:#1e2328; color:#eee;
+  border-radius:8px; overflow:auto; max-height:360px; white-space:pre-wrap;
+  font:12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.command-label { margin-top:10px; font-size:12px; font-weight:700; color:#59656f; }
+
+body.modal-open { overflow:hidden; }
+.log-button {
+  margin-top:10px; padding:7px 10px; background:#eef1f4; color:#17202a;
+  border:1px solid #cbd2d9; border-radius:8px;
+}
+.log-button:hover { background:#e3e7eb; opacity:1; }
+.log-modal.hidden { display:none; }
+.log-modal {
+  position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center;
+  padding:18px;
+}
+.log-modal-backdrop {
+  position:absolute; inset:0; background:rgba(15,23,30,.55);
+}
+.log-modal-card {
+  position:relative; width:min(1000px, 100%); max-height:min(90vh, 900px); overflow:auto;
+  background:white; border-radius:16px; padding:20px; box-shadow:0 20px 70px rgba(0,0,0,.3);
+}
+.log-modal-header { display:flex; justify-content:space-between; align-items:flex-start; gap:15px; }
+.log-modal-header h2 { margin:0; }
+.log-modal-status { margin-top:4px; color:#59656f; font-size:13px; }
+.log-close { margin-top:0; }
+.log-modal-card pre {
+  margin:8px 0 0; padding:10px; background:#1e2328; color:#eee; border-radius:8px;
+  overflow:auto; white-space:pre-wrap; font:12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.log-modal-output { max-height:55vh; min-height:220px; }
+@media (max-width:650px) {
+  .log-modal { padding:8px; }
+  .log-modal-card { max-height:95vh; padding:15px; }
+  .log-modal-output { max-height:58vh; }
+}
