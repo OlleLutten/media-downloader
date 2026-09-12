@@ -392,7 +392,13 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
             program_name = get_tv4_program_name(url) if is_tv4_url else get_svt_program_name(url)
             if program_name:
                 _set_job_title(job_id, program_name)
-            svt_output_dir = target_dir / program_name if program_name else target_dir / DEFAULT_FOLDER
+            # SVT honors --output as expected. TV4 Play can still place the
+            # resulting media in its fallback directory depending on the
+            # service/URL, so deliberately use the fallback directory for TV4
+            # and move the files to the programme folder after each download.
+            # This makes the destination deterministic instead of relying on
+            # TV4's service-specific output handling.
+            svt_output_dir = (target_dir / DEFAULT_FOLDER) if is_tv4_url else (target_dir / program_name if program_name else target_dir / DEFAULT_FOLDER)
             svt_output_dir.mkdir(parents=True, exist_ok=True)
 
             common = ["svtplay-dl", "--output", str(svt_output_dir), "--all-subtitles"]
