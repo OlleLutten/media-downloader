@@ -134,23 +134,67 @@ def _svt_humanize_slug(value):
     return sanitize_folder_name(" ".join(words))
 
 
+def _tv4_humanize_program_name(value):
+    """Turn a TV4 programme title/slug into a clean folder name."""
+    value = unescape(str(value or "")).strip()
+    value = re.sub(r"\s+[-–—|]\s*(?:Avsnitt|Episode)\s+\d+.*$", "", value, flags=re.I)
+    value = re.sub(r"\s*,?\s*Säsong\s+\d+.*$", "", value, flags=re.I)
+    value = value.replace("_", " ").replace("-", " ").replace(".", " ")
+    value = re.sub(r"\s+", " ", value).strip(" .?\t\r\n")
+    if not value:
+        return ""
+    words = [w[:1].upper() + w[1:] if w else w for w in value.split()]
+    for i in range(1, len(words)):
+        if words[i].lower() in {"på", "i", "och", "av", "för", "med", "från", "till", "om"}:
+            words[i] = words[i].lower()
+    return sanitize_folder_name(" ".join(words))
+
+
 def get_tv4_program_name(url):
-    """Get the programme name from a normal TV4 Play /program/... URL."""
+    """Get the programme name from TV4 /program/... or /video/... URLs.
+
+    A TV4 program page contains the programme slug directly in the URL. A
+    single video URL only contains the episode slug, so for /video/... we
+    fetch the page title/og:title and strip the episode/season suffix.
+    """
     try:
-        parts = [p for p in url.split("?", 1)[0].split("#", 1)[0].split("/") if p]
+        clean_url = url.split("?", 1)[0].split("#", 1)[0]
+        parts = [p for p in clean_url.split("/") if p]
         for i, part in enumerate(parts):
             if part.lower() == "program" and i + 2 < len(parts):
                 candidate = parts[i + 2]
                 if candidate and candidate.lower() not in {"program", "play"}:
-                    value = unescape(candidate).replace("_", " ").replace("-", " ").replace(".", " ")
-                    value = re.sub(r"\s+", " ", value).strip()
-                    if value:
-                        words = value.split()
-                        words = [w[:1].upper() + w[1:] if w else w for w in words]
-                        for j in range(1, len(words)):
-                            if words[j].lower() in {"på", "i", "och", "av", "för", "med", "från", "till", "om"}:
-                                words[j] = words[j].lower()
-                        return sanitize_folder_name(" ".join(words))
+                    name = _tv4_humanize_program_name(candidate)
+                    if name:
+                        return name
+
+        # Single TV4 video URL, e.g. /video/<id>/avsnitt-5-... . The page
+        # title is normally "Program - Avsnitt N, Säsong N".
+        if any(part.lower() == "video" for part in parts):
+            req = Request(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; MediaDownloader/1.0)",
+                    "Accept": "text/html,application/xhtml+xml",
+                },
+            )
+            with urlopen(req, timeout=10) as response:
+                html = response.read().decode("utf-8", "ignore")
+
+            candidates = []
+            for pattern in (
+                r'<meta[^>]+(?:property|name)=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
+                r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']og:title["\']',
+                r'<title[^>]*>(.*?)</title>',
+            ):
+                match = re.search(pattern, html, flags=re.I | re.S)
+                if match:
+                    candidates.append(unescape(re.sub(r"<[^>]+>", "", match.group(1))).strip())
+
+            for candidate in candidates:
+                name = _tv4_humanize_program_name(candidate)
+                if name and not re.fullmatch(r"Avsnitt\s+\d+.*", name, flags=re.I):
+                    return name
     except Exception:
         pass
     return ""
