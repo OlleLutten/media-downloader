@@ -54,27 +54,6 @@ def save_tv4_token(token):
             pass
 
 
-def safe_folder_path(value):
-    """Turn a user-entered relative folder into a safe path below DOWNLOAD_DIR."""
-    value = (value or "").strip().replace("\\", "/")
-    parts = []
-    for part in value.split("/"):
-        part = part.strip()
-        if not part or part in (".", ".."):
-            continue
-        part = re.sub(r'[<>:"|?*\x00-\x1f]+', "_", part)
-        part = part.strip(" .")
-        if part:
-            parts.append(part[:120])
-    return Path(*parts) if parts else Path(DEFAULT_FOLDER)
-
-
-def relative_folder(folder):
-    path = safe_folder_path(folder)
-    full = DOWNLOAD_DIR / path
-    full.mkdir(parents=True, exist_ok=True)
-    return path.as_posix()
-
 
 def safe_upload_path(value):
     value = (value or "").strip().replace("\\", "/")
@@ -98,7 +77,7 @@ def safe_upload_file_path(value):
 
 def run_job(job_id, url, downloader, folder, quality, settings=None):
     settings = settings or {}
-    target_dir = DOWNLOAD_DIR / safe_folder_path(folder)
+    target_dir = DOWNLOAD_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
 
     with lock:
@@ -110,9 +89,11 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
     include_clips = bool(settings.get("include_clips", False))
     chapters = bool(settings.get("chapters", False))
     raw_subtitles = bool(settings.get("raw_subtitles", False))
+    thumbnail = bool(settings.get("thumbnail", False))
+    embed_thumbnail = bool(settings.get("embed_thumbnail", False))
 
     if downloader == "svtplay-dl":
-        cmd = ["svtplay-dl", "--output", str(target_dir), "--all-subtitles"]
+        cmd = ["svtplay-dl", "--output", str(target_dir), "--subfolder", "--all-subtitles"]
         tv4_token = read_tv4_token()
         if tv4_token:
             cmd += ["--token", tv4_token]
@@ -122,6 +103,8 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
             cmd += ["--chapters"]
         if raw_subtitles:
             cmd += ["--raw-subtitles"]
+        if thumbnail:
+            cmd += ["--thumbnail"]
         if all_episodes:
             cmd += ["--all-episodes"]
             if all_last > 0:
@@ -130,7 +113,7 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                 cmd += ["--include-clips"]
         cmd.append(url)
     else:
-        outtmpl = str(target_dir / "%(title)s [%(id)s].%(ext)s")
+        outtmpl = str(target_dir / "%(playlist_title|movies)s" / "%(title)s [%(id)s].%(ext)s")
         cmd = [
             "yt-dlp", "--newline", "-o", outtmpl,
             "--write-subs", "--write-auto-subs", "--sub-langs", "all",
@@ -143,6 +126,10 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
             cmd += ["--sub-format", "srt/vtt/ass/best"]
         if chapters:
             cmd += ["--embed-chapters"]
+        if thumbnail:
+            cmd += ["--write-thumbnail"]
+        if embed_thumbnail:
+            cmd += ["--embed-thumbnail"]
         if all_episodes and all_last > 0:
             cmd += ["--playlist-reverse", "--playlist-end", str(all_last)]
         if quality == "best":
@@ -226,19 +213,21 @@ def parse_download_settings(data):
         "all_last": all_last,
         "include_clips": bool(data.get("include_clips", False)),
         "raw_subtitles": bool(data.get("raw_subtitles", False)),
+        "thumbnail": bool(data.get("thumbnail", False)),
+        "embed_thumbnail": bool(data.get("embed_thumbnail", False)),
     }, quality
 
 
-def create_job(url, downloader, folder, quality, settings):
+def create_job(url, downloader, quality, settings):
     job_id = uuid.uuid4().hex[:10]
     with lock:
         jobs[job_id] = {
-            "id": job_id, "url": url, "downloader": downloader, "folder": folder,
+            "id": job_id, "url": url, "downloader": downloader,
             "status": "queued", "progress": 0, "message": "Väntar…", "output": [],
         }
     threading.Thread(
         target=run_job,
-        args=(job_id, url, downloader, folder, quality, settings),
+        args=(job_id, url, downloader, "", quality, settings),
         daemon=True,
     ).start()
     return jobs[job_id]
@@ -249,7 +238,6 @@ def download():
     data = request.get_json(silent=True) or {}
     url = (data.get("url") or "").strip()
     requested = data.get("downloader", "auto")
-    folder = relative_folder(data.get("folder", ""))
     if not re.match(r"^https?://", url):
         return jsonify({"error": "Ange en giltig http/https-URL."}), 400
     if requested not in ("auto", "yt-dlp", "svtplay-dl"):
@@ -259,7 +247,7 @@ def download():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     downloader = choose_downloader(url, requested)
-    return jsonify(create_job(url, downloader, folder, quality, settings))
+    return jsonify(create_job(url, downloader, quality, settings))
 
 
 @app.post("/api/download-all")
@@ -267,7 +255,6 @@ def download_all():
     data = request.get_json(silent=True) or {}
     url = (data.get("url") or "").strip()
     requested = data.get("downloader", "auto")
-    folder = relative_folder(data.get("folder", ""))
     if not re.match(r"^https?://", url):
         return jsonify({"error": "Ange en giltig http/https-URL."}), 400
     if requested not in ("auto", "yt-dlp", "svtplay-dl"):
@@ -278,7 +265,7 @@ def download_all():
         return jsonify({"error": str(e)}), 400
     settings["all_episodes"] = True
     downloader = choose_downloader(url, requested)
-    item = create_job(url, downloader, folder, quality, settings)
+    item = create_job(url, downloader, quality, settings)
     return jsonify({"jobs": [item], "count": 1})
 
 

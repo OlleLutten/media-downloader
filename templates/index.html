@@ -24,16 +24,7 @@
       <button id="downloadAll" class="secondary-action" type="button">Ladda ner alla avsnitt</button>
     </div>
 
-    <label for="folder">Mapp</label>
-    <div class="folder-row">
-      <select id="folder"></select>
-      <button id="refreshFolders" class="secondary" type="button" title="Uppdatera mapplistan">↻</button>
-    </div>
-
-    <label for="newFolder">Eller skapa ny mapp</label>
-    <input id="newFolder" type="text" placeholder="t.ex. Dokumentärer / Historia">
-
-    <p class="hint">Standardmapp: <strong>Nedladdningar Osorterade</strong>. Ny mapp skapas automatiskt om den inte finns.</p>
+    <p class="hint">Nedladdningar sorteras automatiskt i en undermapp med programmets/seriens namn.</p>
 
     <button id="start">Ladda ner</button>
     <div id="error"></div>
@@ -63,6 +54,16 @@
       </label>
 
       <label class="check-row">
+        <input id="thumbnail" type="checkbox">
+        <span>Ladda ner thumbnail</span>
+      </label>
+
+      <label class="check-row">
+        <input id="embedThumbnail" type="checkbox">
+        <span>Bädda in thumbnail i videon</span>
+      </label>
+
+      <label class="check-row">
         <input id="includeClips" type="checkbox">
         <span>Inkludera klipp vid «alla avsnitt»</span>
       </label>
@@ -73,7 +74,7 @@
       </div>
     </div>
 
-    <p class="hint">«Senaste NN» och «Inkludera klipp» används främst av svtplay-dl. 0 på «Senaste NN» betyder alla avsnitt. På YouTube används «Senaste NN» för att ta de sista posterna i en spellista.</p>
+    <p class="hint"><strong>Automatisk undermapp:</strong> Nedladdningar sorteras automatiskt efter program/serie. För svtplay-dl används <code>--subfolder</code>. YouTube-spellistor sorteras efter spellistans namn och enskilda videor hamnar i <code>movies</code>.<br><br>«Senaste NN» och «Inkludera klipp» används främst av svtplay-dl. 0 på «Senaste NN» betyder alla avsnitt. På YouTube används «Senaste NN» för att ta de sista posterna i en spellista. Thumbnail kan sparas som separat bild med båda downloaders; inbäddning av thumbnail stöds av yt-dlp.</p>
 
     <label for="tv4Token">TV4 Play-token</label>
     <input id="tv4Token" type="password" autocomplete="new-password" placeholder="Token sparas på servern">
@@ -119,29 +120,9 @@ function statusText(status) {
   })[status] || status;
 }
 
-async function loadFolders() {
-  const select = document.querySelector('#folder');
-  const current = select.value;
-  const res = await fetch('/api/folders');
-  if (!res.ok) return;
-  const folders = await res.json();
-
-  select.innerHTML = folders.map(f =>
-    `<option value="${esc(f)}">${esc(f)}</option>`
-  ).join('');
-
-  if (folders.includes(current)) select.value = current;
-  else if (folders.includes('Nedladdningar Osorterade')) {
-    select.value = 'Nedladdningar Osorterade';
-  }
-}
-
 async function startDownloadAll() {
   const url = document.querySelector('#url').value.trim();
   const error = document.querySelector('#error');
-  const newFolder = document.querySelector('#newFolder').value.trim();
-  const selectedFolder = document.querySelector('#folder').value;
-  const folder = newFolder || selectedFolder || 'Nedladdningar Osorterade';
 
   error.textContent = '';
   if (!url) {
@@ -156,11 +137,12 @@ async function startDownloadAll() {
       url,
       downloader: 'auto',
       quality: document.querySelector('#quality').value,
-      folder,
       chapters: document.querySelector('#chapters').checked,
       all_last: Number(document.querySelector('#allLast').value || 0),
       include_clips: document.querySelector('#includeClips').checked,
-      raw_subtitles: document.querySelector('#rawSubtitles').checked
+      raw_subtitles: document.querySelector('#rawSubtitles').checked,
+      thumbnail: document.querySelector('#thumbnail').checked,
+      embed_thumbnail: document.querySelector('#embedThumbnail').checked
     })
   });
 
@@ -174,8 +156,6 @@ async function startDownloadAll() {
     jobs.set(item.id, item);
   }
   document.querySelector('#url').value = '';
-  document.querySelector('#newFolder').value = '';
-  await loadFolders();
   renderJobs();
 }
 
@@ -199,12 +179,13 @@ async function startDownload() {
     body: JSON.stringify({
       url,
       quality: document.querySelector('#quality').value,
-      folder,
       chapters: document.querySelector('#chapters').checked,
       all_episodes: false,
       all_last: Number(document.querySelector('#allLast').value || 0),
       include_clips: document.querySelector('#includeClips').checked,
-      raw_subtitles: document.querySelector('#rawSubtitles').checked
+      raw_subtitles: document.querySelector('#rawSubtitles').checked,
+      thumbnail: document.querySelector('#thumbnail').checked,
+      embed_thumbnail: document.querySelector('#embedThumbnail').checked
     })
   });
 
@@ -216,14 +197,11 @@ async function startDownload() {
 
   jobs.set(data.id, data);
   document.querySelector('#url').value = '';
-  document.querySelector('#newFolder').value = '';
 
   // Refresh so a newly-created folder becomes selectable immediately.
-  await loadFolders();
   renderJobs();
 }
 
-async function loadUploadFolders() {
   const select = document.querySelector('#uploadFolder');
   const res = await fetch('/api/upload-folders');
   if (!res.ok) return;
@@ -258,7 +236,6 @@ async function uploadFiles() {
     : (data.error || 'Uppladdningen misslyckades.');
   if (res.ok) {
     input.value = '';
-    await loadUploadFolders();
   }
 }
 
@@ -268,6 +245,8 @@ function loadLocalDownloadSettings() {
     if (saved.quality) document.querySelector('#quality').value = saved.quality;
     document.querySelector('#chapters').checked = !!saved.chapters;
     document.querySelector('#rawSubtitles').checked = !!saved.rawSubtitles;
+    document.querySelector('#thumbnail').checked = !!saved.thumbnail;
+    document.querySelector('#embedThumbnail').checked = !!saved.embedThumbnail;
     document.querySelector('#includeClips').checked = !!saved.includeClips;
     if (saved.allLast !== undefined) document.querySelector('#allLast').value = saved.allLast;
   } catch (_) {}
@@ -278,6 +257,8 @@ function saveLocalDownloadSettings() {
     quality: document.querySelector('#quality').value,
     chapters: document.querySelector('#chapters').checked,
     rawSubtitles: document.querySelector('#rawSubtitles').checked,
+    thumbnail: document.querySelector('#thumbnail').checked,
+    embedThumbnail: document.querySelector('#embedThumbnail').checked,
     includeClips: document.querySelector('#includeClips').checked,
     allLast: document.querySelector('#allLast').value || ''
   }));
@@ -350,22 +331,16 @@ document.querySelector('#settingsToggle').addEventListener('click', () => {
   const settings = document.querySelector('#settings');
   settings.classList.toggle('hidden');
 });
-document.querySelector('#refreshFolders').addEventListener('click', loadFolders);
 document.querySelector('#uploadStart').addEventListener('click', uploadFiles);
 document.querySelector('#url').addEventListener('keydown', e => {
   if (e.key === 'Enter') startDownload();
 });
-document.querySelector('#newFolder').addEventListener('keydown', e => {
-  if (e.key === 'Enter') startDownload();
-});
 document.querySelector('#saveSettings').addEventListener('click', saveSettings);
-['quality','chapters','rawSubtitles','includeClips','allLast'].forEach(id => {
+['quality','chapters','rawSubtitles','thumbnail','embedThumbnail','includeClips','allLast'].forEach(id => {
   document.querySelector('#' + id).addEventListener('change', saveLocalDownloadSettings);
 });
 
 loadLocalDownloadSettings();
-loadFolders();
-loadUploadFolders();
 loadSettings();
 setInterval(poll, 1500);
 </script>
