@@ -109,6 +109,7 @@ body.modal-open { overflow:hidden; }
   border:1px solid #cbd2d9; border-radius:8px;
 }
 .log-button:hover { background:#e3e7eb; opacity:1; }
+.log-modal.hidden { display:none; }
 .log-modal {
   position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center;
   padding:18px;
