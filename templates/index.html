@@ -32,6 +32,7 @@
 
   <section id="settings" class="card hidden">
     <h2>Inställningar</h2>
+    <p class="hint">Kapitel och thumbnail är alltid aktiverade.</p>
 
     <label for="quality">Kvalitet</label>
     <select id="quality">
@@ -43,22 +44,11 @@
     </select>
 
     <div class="settings-grid">
-      <label class="check-row">
-        <input id="chapters" type="checkbox">
-        <span>Lägg till kapitel</span>
-      </label>
-
-      <label class="check-row">
+<label class="check-row">
         <input id="rawSubtitles" type="checkbox">
         <span>Spara undertexter i originalformat</span>
       </label>
-
-      <label class="check-row">
-        <input id="thumbnail" type="checkbox">
-        <span>Ladda ner thumbnail</span>
-      </label>
-
-      <label class="check-row">
+<label class="check-row">
         <input id="embedThumbnail" type="checkbox">
         <span>Bädda in thumbnail i videon</span>
       </label>
@@ -74,7 +64,7 @@
       </div>
     </div>
 
-    <p class="hint"><strong>Automatisk undermapp:</strong> Nedladdningar sorteras automatiskt efter program/serie. För svtplay-dl används <code>--subfolder</code>. YouTube-spellistor sorteras efter spellistans namn och enskilda videor hamnar i <code>movies</code>.<br><br>«Senaste NN» och «Inkludera klipp» används främst av svtplay-dl. 0 på «Senaste NN» betyder alla avsnitt. På YouTube används «Senaste NN» för att ta de sista posterna i en spellista. Thumbnail kan sparas som separat bild med båda downloaders; inbäddning av thumbnail stöds av yt-dlp.</p>
+    <p class="hint"><strong>Automatisk undermapp:</strong> Nedladdningar sorteras automatiskt efter program/serie. För svtplay-dl används <code>--subfolder</code>. YouTube-spellistor sorteras efter spellistans namn och enskilda videor hamnar i <code>movies</code>.<br><br>«Senaste NN» och «Inkludera klipp» används främst av svtplay-dl. 0 på «Senaste NN» betyder alla avsnitt. På YouTube används «Senaste NN» för att ta de sista posterna i en spellista. Kapitel och thumbnail laddas alltid ner automatiskt. Inbäddning av thumbnail stöds av yt-dlp.</p>
 
     <label for="tv4Token">TV4 Play-token</label>
     <input id="tv4Token" type="password" autocomplete="new-password" placeholder="Token sparas på servern">
@@ -137,11 +127,9 @@ async function startDownloadAll() {
       url,
       downloader: 'auto',
       quality: document.querySelector('#quality').value,
-      chapters: document.querySelector('#chapters').checked,
       all_last: Number(document.querySelector('#allLast').value || 0),
       include_clips: document.querySelector('#includeClips').checked,
       raw_subtitles: document.querySelector('#rawSubtitles').checked,
-      thumbnail: document.querySelector('#thumbnail').checked,
       embed_thumbnail: document.querySelector('#embedThumbnail').checked
     })
   });
@@ -175,12 +163,10 @@ async function startDownload() {
     body: JSON.stringify({
       url,
       quality: document.querySelector('#quality').value,
-      chapters: document.querySelector('#chapters').checked,
       all_episodes: false,
       all_last: Number(document.querySelector('#allLast').value || 0),
       include_clips: document.querySelector('#includeClips').checked,
       raw_subtitles: document.querySelector('#rawSubtitles').checked,
-      thumbnail: document.querySelector('#thumbnail').checked,
       embed_thumbnail: document.querySelector('#embedThumbnail').checked
     })
   });
@@ -238,9 +224,7 @@ function loadLocalDownloadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem('mediaDownloaderSettings') || '{}');
     if (saved.quality) document.querySelector('#quality').value = saved.quality;
-    document.querySelector('#chapters').checked = !!saved.chapters;
     document.querySelector('#rawSubtitles').checked = !!saved.rawSubtitles;
-    document.querySelector('#thumbnail').checked = !!saved.thumbnail;
     document.querySelector('#embedThumbnail').checked = !!saved.embedThumbnail;
     document.querySelector('#includeClips').checked = !!saved.includeClips;
     if (saved.allLast !== undefined) document.querySelector('#allLast').value = saved.allLast;
@@ -250,9 +234,7 @@ function loadLocalDownloadSettings() {
 function saveLocalDownloadSettings() {
   localStorage.setItem('mediaDownloaderSettings', JSON.stringify({
     quality: document.querySelector('#quality').value,
-    chapters: document.querySelector('#chapters').checked,
     rawSubtitles: document.querySelector('#rawSubtitles').checked,
-    thumbnail: document.querySelector('#thumbnail').checked,
     embedThumbnail: document.querySelector('#embedThumbnail').checked,
     includeClips: document.querySelector('#includeClips').checked,
     allLast: document.querySelector('#allLast').value || ''
@@ -330,7 +312,7 @@ document.querySelector('#url').addEventListener('keydown', e => {
   if (e.key === 'Enter') startDownload();
 });
 document.querySelector('#saveSettings').addEventListener('click', saveSettings);
-['quality','chapters','rawSubtitles','thumbnail','embedThumbnail','includeClips','allLast'].forEach(id => {
+['quality','rawSubtitles','embedThumbnail','includeClips','allLast'].forEach(id => {
   document.querySelector('#' + id).addEventListener('change', saveLocalDownloadSettings);
 });
 

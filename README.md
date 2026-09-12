@@ -13,7 +13,8 @@ Webbgränssnitt för yt-dlp + svtplay-dl.
 - Pågående jobb med procent och status
 - Misslyckade jobb visar felstatus och senaste output
 - Nedladdade filer visas inklusive undermappar
-- YouTube använder yt-dlp; övriga URL:er använder svtplay-dl
+- YouTube använder yt-dlp; övriga URL:er använder svtplay-dl.
+- Kapitel och thumbnail laddas alltid ner automatiskt.
 - TV4 Play-token kan sparas gemensamt för alla användare
 - Filer och mappar kan laddas upp till en valbar undermapp
 

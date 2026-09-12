@@ -5,6 +5,8 @@ import subprocess
 import threading
 import uuid
 from pathlib import Path
+from html import unescape
+from urllib.request import Request, urlopen
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
@@ -75,6 +77,64 @@ def safe_upload_file_path(value):
     return path
 
 
+
+def sanitize_folder_name(value):
+    value = unescape(str(value or "")).strip()
+    value = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", value)
+    value = re.sub(r"\s+", " ", value).strip(" .")
+    return value[:120]
+
+
+def get_svt_program_name(url):
+    """Try to get the human-readable programme/series name from the SVT page."""
+    try:
+        req = Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; MediaDownloader/1.0)",
+                "Accept": "text/html,application/xhtml+xml",
+            },
+        )
+        with urlopen(req, timeout=10) as response:
+            html = response.read().decode("utf-8", "ignore")
+
+        # Prefer JSON-LD metadata, where SVT normally exposes the series name.
+        for raw in re.findall(
+            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+            html,
+            flags=re.I | re.S,
+        ):
+            try:
+                data = json.loads(raw)
+            except Exception:
+                continue
+
+            candidates = data if isinstance(data, list) else [data]
+            for item in candidates:
+                if not isinstance(item, dict):
+                    continue
+                for key in ("partOfSeries", "isPartOf"):
+                    parent = item.get(key)
+                    if isinstance(parent, dict):
+                        name = sanitize_folder_name(parent.get("name"))
+                        if name:
+                            return name
+
+        # Some pages expose the series name in OpenGraph/meta data.
+        for pattern in (
+            r'<meta[^>]+(?:property|name)=["\'](?:og:series|twitter:label1)["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:series|twitter:label1)["\']',
+        ):
+            match = re.search(pattern, html, flags=re.I)
+            if match:
+                name = sanitize_folder_name(match.group(1))
+                if name:
+                    return name
+    except Exception:
+        pass
+    return ""
+
+
 def run_job(job_id, url, downloader, folder, quality, settings=None):
     settings = settings or {}
     target_dir = DOWNLOAD_DIR
@@ -87,13 +147,20 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
     all_episodes = bool(settings.get("all_episodes", False))
     all_last = int(settings.get("all_last", 0) or 0)
     include_clips = bool(settings.get("include_clips", False))
-    chapters = bool(settings.get("chapters", False))
+    chapters = True
     raw_subtitles = bool(settings.get("raw_subtitles", False))
-    thumbnail = bool(settings.get("thumbnail", False))
+    thumbnail = True
     embed_thumbnail = bool(settings.get("embed_thumbnail", False))
 
     if downloader == "svtplay-dl":
-        cmd = ["svtplay-dl", "--output", str(target_dir), "--subfolder", "--all-subtitles"]
+        program_name = get_svt_program_name(url)
+        svt_output_dir = target_dir / program_name if program_name else target_dir
+        if program_name:
+            svt_output_dir.mkdir(parents=True, exist_ok=True)
+            cmd = ["svtplay-dl", "--output", str(svt_output_dir), "--all-subtitles"]
+        else:
+            # Fall back to svtplay-dl's own --subfolder behavior if metadata lookup fails.
+            cmd = ["svtplay-dl", "--output", str(target_dir), "--subfolder", "--all-subtitles"]
         tv4_token = read_tv4_token()
         if tv4_token:
             cmd += ["--token", tv4_token]
