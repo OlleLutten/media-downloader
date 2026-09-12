@@ -170,17 +170,41 @@ def run_job(job_id, url, downloader, folder, quality):
 
         code = proc.wait()
 
+        # Some downloader failures can be accompanied by a zero exit code.
+        # Explicit error output should therefore override the exit code.
+        error_patterns = (
+            r"\\berror\\b",
+            r"\\bfailed\\b",
+            r"\\bfailure\\b",
+            r"\\bunable to\\b",
+            r"\\bexception\\b",
+            r"http error",
+            r"traceback",
+        )
+        output_text = "\\n".join(recent_output)
+        explicit_error = any(
+            re.search(pattern, output_text, re.IGNORECASE)
+            for pattern in error_patterns
+        )
+
+        success = code == 0 and not explicit_error
+
         with lock:
             jobs[job_id]["output"] = recent_output
-            if code == 0:
+            if success:
                 jobs[job_id]["status"] = "done"
                 jobs[job_id]["progress"] = 100
                 jobs[job_id]["message"] = "Klar!"
             else:
                 jobs[job_id]["status"] = "error"
-                jobs[job_id]["message"] = (
-                    f"Nedladdningen misslyckades (kod {code})."
-                )
+                if code != 0:
+                    jobs[job_id]["message"] = (
+                        f"Nedladdningen misslyckades (kod {code})."
+                    )
+                else:
+                    jobs[job_id]["message"] = (
+                        "Nedladdningen misslyckades trots att processen avslutades utan felkod."
+                    )
     except Exception as e:
         with lock:
             jobs[job_id]["status"] = "error"
@@ -307,10 +331,10 @@ def folders():
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     folders = [Path(DEFAULT_FOLDER)]
 
-    for p in DOWNLOAD_DIR.rglob("*"):
+    for p in DOWNLOAD_DIR.iterdir():
         if p.is_dir():
             rel = p.relative_to(DOWNLOAD_DIR)
-            if len(rel.parts) <= 2 and rel not in folders:
+            if len(rel.parts) == 1 and rel not in folders:
                 folders.append(rel)
 
     folders = sorted({p.as_posix() for p in folders}, key=str.casefold)
