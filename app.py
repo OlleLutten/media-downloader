@@ -254,6 +254,28 @@ def _extract_episode_urls(lines):
     return urls
 
 
+def _filter_svt_subtitles(folder):
+    """Keep only Swedish/English subtitle files after svtplay-dl download.
+
+    svtplay-dl currently exposes --all-subtitles but no language-selection
+    option, so we filter the resulting subtitle files by their language tag.
+    This also keeps variants such as sv-caption and en-US.
+    """
+    subtitle_exts = {".srt", ".vtt", ".ttml", ".dfxp", ".xml", ".ass", ".sub", ".smi"}
+    lang_re = re.compile(r"(?:^|[._-])(sv|swe|en|eng)(?:[._-]|$)", re.IGNORECASE)
+    removed = []
+    for path in folder.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in subtitle_exts:
+            continue
+        if not lang_re.search(path.stem):
+            try:
+                path.unlink()
+                removed.append(path.name)
+            except OSError:
+                pass
+    return removed
+
+
 def run_job(job_id, url, downloader, folder, quality, settings=None):
     settings = settings or {}
     target_dir = DOWNLOAD_DIR
@@ -391,6 +413,11 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                 if code != 0:
                     raise RuntimeError(f"Nedladdningen misslyckades (kod {code}).")
 
+            if svt_output_dir.exists():
+                removed_subtitles = _filter_svt_subtitles(svt_output_dir)
+                if removed_subtitles:
+                    _append_job_log(job_id, f"Tog bort {len(removed_subtitles)} undertexter som inte är svenska eller engelska.")
+
             if program_name and svt_output_dir.exists():
                 for path in list(svt_output_dir.iterdir()):
                     if not path.is_file():
@@ -408,7 +435,7 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
             outtmpl = str(target_dir / "%(playlist_title|movies)s" / "%(title)s [%(id)s].%(ext)s")
             cmd = [
                 "yt-dlp", "--newline", "-o", outtmpl,
-                "--write-subs", "--write-auto-subs", "--sub-langs", "all",
+                "--write-subs", "--write-auto-subs", "--sub-langs", "sv.*,en.*",
                 # YouTube can rate-limit subtitle requests (HTTP 429). Slow
                 # subtitle/request traffic down and retry HTTP failures with
                 # exponential backoff instead of failing immediately.
