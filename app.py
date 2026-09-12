@@ -332,7 +332,16 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                 # Enumerate episode URLs explicitly, newest first, then download
                 # exactly the requested number of URLs. This avoids cases where
                 # --all-last is ignored by a service-specific series-page parser.
-                enum_cmd = ["svtplay-dl", "--all-episodes", "--get-only-episode-url", "--reverse"]
+                # svtplay-dl's TV4 adapter gets episodes from the API in ASC
+                # order and reverses that list internally by default. Passing
+                # --reverse disables that internal reversal, which would make
+                # [:all_last] select the OLDEST episodes on TV4. SVT needs the
+                # explicit reverse flag with the current enumeration behavior.
+                host = re.sub(r"^www\.", "", re.split(r"/", url.split("://", 1)[-1])[0].lower())
+                is_tv4 = host == "tv4play.se" or host.endswith(".tv4play.se") or host == "tv4.se" or host.endswith(".tv4.se")
+                enum_cmd = ["svtplay-dl", "--all-episodes", "--get-only-episode-url"]
+                if not is_tv4:
+                    enum_cmd.append("--reverse")
                 if tv4_token:
                     enum_cmd += ["--token", tv4_token]
                 if include_clips:
