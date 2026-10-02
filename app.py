@@ -459,16 +459,13 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
             if thumbnail:
                 common += ["--thumbnail"]
 
-            if all_last > 0:
-                # Do not rely on svtplay-dl's --all-last implementation here.
-                # Enumerate episode URLs explicitly, newest first, then download
-                # exactly the requested number of URLs. This avoids cases where
-                # --all-last is ignored by a service-specific series-page parser.
-                # svtplay-dl's TV4 adapter gets episodes from the API in ASC
-                # order and reverses that list internally by default. Passing
-                # --reverse disables that internal reversal, which would make
-                # [:all_last] select the OLDEST episodes on TV4. SVT needs the
-                # explicit reverse flag with the current enumeration behavior.
+            if effective_all_episodes:
+                # Download series episodes one-by-one instead of using
+                # svtplay-dl's native --all-episodes mode. This is important
+                # for SVT thumbnails: --thumbnail works reliably for an
+                # individual episode, while bulk mode can omit thumbnails.
+                # It also lets us keep the exact same behavior for "latest N"
+                # and "all episodes".
                 host = re.sub(r"^www\.", "", re.split(r"/", url.split("://", 1)[-1])[0].lower())
                 is_tv4 = host == "tv4play.se" or host.endswith(".tv4play.se") or host == "tv4.se" or host.endswith(".tv4.se")
                 enum_cmd = ["svtplay-dl", "--all-episodes", "--get-only-episode-url"]
@@ -481,7 +478,10 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                 enum_cmd.append(url)
                 display_enum = shlex.join(enum_cmd).replace(tv4_token, "***REDACTED***") if tv4_token else shlex.join(enum_cmd)
                 _append_job_log(job_id, f"Urvalskommando: {display_enum}")
-                _append_job_log(job_id, f"Hämtar episodlistan för att välja exakt senaste {all_last} avsnitt…")
+                if all_last > 0:
+                    _append_job_log(job_id, f"Hämtar episodlistan för att välja exakt senaste {all_last} avsnitt…")
+                else:
+                    _append_job_log(job_id, "Hämtar episodlistan för att ladda ner alla avsnitt…")
 
                 enum_proc = subprocess.Popen(
                     enum_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -506,8 +506,11 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                         f"Kunde inte hämta episodlistan (kod {enum_code}). Hittade {len(episode_urls)} episod-URL:er."
                     )
 
-                selected = episode_urls[:all_last]
-                _append_job_log(job_id, f"Hittade {len(episode_urls)} avsnitt. Väljer exakt {len(selected)} senaste:")
+                selected = episode_urls[:all_last] if all_last > 0 else episode_urls
+                if all_last > 0:
+                    _append_job_log(job_id, f"Hittade {len(episode_urls)} avsnitt. Väljer exakt {len(selected)} senaste:")
+                else:
+                    _append_job_log(job_id, f"Hittade {len(selected)} avsnitt. Laddar ner alla:")
                 for i, episode_url in enumerate(selected, 1):
                     _append_job_log(job_id, f"  {i}. {episode_url}")
 
@@ -518,36 +521,20 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                     display = shlex.join(cmd).replace(tv4_token, "***REDACTED***") if tv4_token else shlex.join(cmd)
                     _append_job_log(job_id, f"Startar avsnitt {index + 1}/{total}")
                     _append_job_log(job_id, f"Kommando: {display}")
-                    # _run_command logs the command too, so temporarily run the
-                    # actual command directly through the helper with redaction
-                    # handled by the log append below.
                     proc = subprocess.Popen(
                         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                         text=True, bufsize=1,
                     )
                     for raw_line in proc.stdout:
-                        line = raw_line.strip()
-                        if not line:
-                            continue
-                        recent_output.append(line)
-                        del recent_output[:-20]
-                        _append_job_log(job_id, line)
-                        _update_job_title_from_line(job_id, line)
-                        p = None
-                        m = re.search(r"(\d+(?:\.\d+)?)%", line)
-                        if m:
-                            p = float(m.group(1))
-                        else:
-                            m = re.search(r"\[(\d+)\s*/\s*(\d+)\]", line)
-                            if m:
-                                cur, tot = int(m.group(1)), int(m.group(2))
-                                if tot:
-                                    p = cur * 100 / tot
-                        with lock:
-                            jobs[job_id]["message"] = line[-500:]
-                            jobs[job_id]["output"] = list(recent_output)
-                            if p is not None:
-                                jobs[job_id]["progress"] = (index + p / 100.0) * 100.0 / total
+                        line = raw_line.rstrip("\n")
+                        if line:
+                            _append_job_log(job_id, line)
+                            recent_output.append(line)
+                            del recent_output[:-20]
+                            _update_job_title_from_line(job_id, line)
+                            with lock:
+                                jobs[job_id]["output"] = list(recent_output)
+                                jobs[job_id]["message"] = line[-500:]
                     code = proc.wait()
                     if is_tv4:
                         moved = _move_tv4_fallback_files_to_program_folder(program_name)
@@ -556,20 +543,6 @@ def run_job(job_id, url, downloader, folder, quality, settings=None):
                     if code != 0:
                         raise RuntimeError(f"Avsnitt {index + 1}/{total} misslyckades (kod {code}).")
 
-            elif effective_all_episodes:
-                cmd = list(common) + ["--all-episodes", url]
-                if include_clips:
-                    cmd += ["--include-clips"]
-                display = shlex.join(cmd).replace(tv4_token, "***REDACTED***") if tv4_token else shlex.join(cmd)
-                _append_job_log(job_id, f"Kommando: {display}")
-                started_ns = time.time_ns()
-                code = _run_command(job_id, cmd, recent_output)
-                if is_tv4_url:
-                    moved = _move_tv4_fallback_files_to_program_folder(program_name)
-                    if moved:
-                        _append_job_log(job_id, f"Flyttade {moved} TV4-fil(er) till mappen {program_name}.")
-                if code != 0:
-                    raise RuntimeError(f"Nedladdningen misslyckades (kod {code}).")
             else:
                 cmd = list(common) + [url]
                 display = shlex.join(cmd).replace(tv4_token, "***REDACTED***") if tv4_token else shlex.join(cmd)

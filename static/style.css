@@ -6,6 +6,17 @@ body {
   color: #17202a;
 }
 .wrap { max-width: 900px; margin: 0 auto; padding: 32px 18px 60px; }
+.quick-links {
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  margin-bottom:18px;
+}
+.quick-links a {
+  display:inline-block; padding:8px 12px;
+  border:1px solid #cbd2d9; border-radius:9px;
+  background:white; color:#17202a;
+  text-decoration:none; font-weight:650; font-size:14px;
+}
+.quick-links a:hover { background:#eef1f4; }
 .hero { display:flex; align-items:center; gap:14px; margin-bottom:22px; }
 .hero > div:nth-child(2) { flex:1; }
 .icon-button { width:44px; height:44px; margin:0; padding:0; font-size:22px; }
